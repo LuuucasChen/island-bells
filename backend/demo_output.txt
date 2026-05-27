@@ -1,0 +1,48 @@
+=======================================================
+  Island Bells - Full Game Flow Demo
+=======================================================
+[1] Create island: DodoCode=Q0EMTK RoomID=3
+[2] OwnerTanuki joined: pid=7
+[2] ResidentGoose joined: pid=8
+[2] ResidentEagle joined: pid=9
+[3] OwnerTanuki seat=0: ok
+[3] ResidentGoose seat=3: ok
+[3] ResidentEagle seat=5: ok
+[4] Players:
+  seat 0: OwnerTanuki bells=10000
+  seat 3: ResidentGoose bells=10000
+  seat 5: ResidentEagle bells=10000
+[5] Start game: hand_id=3 round=preflop pot=75
+[6] Game state: round=preflop pot=75
+  OwnerTanuki [BB] bells=9950 bet=50
+  ResidentGoose [D] bells=10000 bet=0
+  ResidentEagle [SB] bells=9975 bet=25
+[7] Owner calls: pot=75
+[7] Goose calls: pot=125
+[7] Eagle raises 100: pot=225
+[7] Owner calls: pot=300
+[7] Goose calls: pot=375
+[8] Advance: round=flop pot=375
+[9] Owner checks: pot=375
+[9] Goose raises 200: pot=575
+[9] Eagle folds
+[9] Owner calls: pot=775
+[10] Advance to showdown:
+  -> round=turn status=betting pot=775
+  -> round=river status=betting pot=775
+  -> round=showdown status=settling pot=775
+[11] Pots: 2
+  main pot: amount=375
+  side pot: amount=400
+[12] Settled: status=settled
+  winner_id=2 amount_won=375
+[13] Final bells:
+  OwnerTanuki: 9675 bells
+  ResidentGoose: 9675 bells
+  ResidentEagle: 9875 bells
+[14] Hand history:
+  Season #1: round=showdown pot=775 status=settled
+
+=======================================================
+  ALL DONE - Game flow completed!
+=======================================================

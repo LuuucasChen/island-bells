@@ -1,0 +1,210 @@
+/* Page layout */
+.join-page {
+  display: flex;
+  flex-direction: column;
+  padding: 0 4px;
+}
+
+/* Compact hero */
+.join-hero-mini {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 24px 0 0;
+}
+
+.join-hero-emoji {
+  font-size: 30px;
+  filter: drop-shadow(0 2px 3px rgba(0, 0, 0, 0.12));
+}
+
+.join-hero-text {
+  font-size: 19px;
+  font-weight: 800;
+  color: #5a3e1b;
+  letter-spacing: 0.02em;
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.6);
+}
+
+/* Form card — NookPhone style */
+.join-form-card {
+  margin-top: 36px;
+  background: #faf6e9;
+  border: 2.5px solid #c4b89e;
+  border-radius: 28px;
+  padding: 32px 24px;
+  box-shadow: 0 6px 0 0 #d4c9b4, 0 10px 24px rgba(180, 160, 120, 0.18);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* Divider inside card */
+.join-divider {
+  height: 1.5px;
+  background: linear-gradient(90deg, transparent 0%, #c4b89e 25%, #c4b89e 75%, transparent 100%);
+  border-radius: 2px;
+  margin: 18px 0;
+  opacity: 0.5;
+}
+
+/* Field */
+.join-field {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.join-field-label {
+  font-size: 16px;
+  font-weight: 800;
+  color: #5a3e1b;
+  letter-spacing: 0.03em;
+}
+
+/* Underline input */
+.join-underline-input {
+  position: relative;
+  width: 100%;
+}
+
+.join-underline-input--flex {
+  flex: 1;
+}
+
+.join-raw-input {
+  width: 100%;
+  border: none;
+  outline: none;
+  background: transparent;
+  font-size: 22px;
+  font-weight: 700;
+  font-family: inherit;
+  color: #5a3e1b;
+  letter-spacing: 0.08em;
+  padding: 6px 0;
+  caret-color: #19c8b9;
+}
+
+.join-raw-input::placeholder {
+  color: #c4b89e;
+  font-weight: 400;
+  font-size: 16px;
+  letter-spacing: 0.02em;
+}
+
+.join-underline {
+  height: 2.5px;
+  background: #c4b89e;
+  border-radius: 2px;
+  margin-top: 2px;
+  transition: background 0.2s;
+}
+
+.join-raw-input:focus + .join-underline {
+  background: #19c8b9;
+}
+
+/* Nickname row with dice */
+.join-underline-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+}
+
+.join-dice-btn {
+  flex-shrink: 0;
+  width: 44px;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50px;
+  background: #faf6e9;
+  border: 2px solid #c4b89e;
+  font-size: 20px;
+  cursor: pointer;
+  box-shadow: 0 3px 0 0 #d4c9b4;
+  transition: all 0.15s ease;
+  padding-bottom: 2px;
+}
+
+.join-dice-btn:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 0 0 #d4c9b4;
+  border-color: #a89878;
+}
+
+.join-dice-btn:active {
+  transform: translateY(2px);
+  box-shadow: 0 1px 0 0 #d4c9b4;
+}
+
+/* Error */
+.join-error {
+  font-size: 13px;
+  color: #e05a5a;
+  font-weight: 600;
+}
+
+/* Nickname tag */
+.join-nickname-tag {
+  display: inline-flex;
+  align-items: center;
+  align-self: flex-start;
+  margin-top: 4px;
+  padding: 4px 12px;
+  background: rgba(25, 200, 185, 0.12);
+  border-radius: 50px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #19c8b9;
+}
+
+/* Departure button — NookPhone 3D style */
+.join-go-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  width: 100%;
+  margin-top: 24px;
+  padding: 16px 24px;
+  background: #19c8b9;
+  color: #fff;
+  border: none;
+  border-radius: 50px;
+  font-size: 17px;
+  font-weight: 700;
+  font-family: inherit;
+  letter-spacing: 0.03em;
+  cursor: pointer;
+  box-shadow: 0 5px 0 0 #11a89b, 0 8px 20px rgba(25, 200, 185, 0.3);
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.15);
+}
+
+.join-go-btn:hover:not(:disabled) {
+  transform: translateY(-2px);
+  box-shadow: 0 7px 0 0 #11a89b, 0 12px 28px rgba(25, 200, 185, 0.35);
+  background: #3dd4c6;
+}
+
+.join-go-btn:active:not(:disabled) {
+  transform: translateY(3px);
+  box-shadow: 0 1px 0 0 #11a89b;
+}
+
+.join-go-btn:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
+}
+
+.join-go-btn-icon {
+  font-size: 20px;
+}
+
+.join-go-btn-loading {
+  opacity: 0.8;
+}

@@ -1,0 +1,44 @@
+.nav-bar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--app-spacing-md) var(--app-spacing-lg);
+  background: var(--app-bg-content);
+  border-bottom: 2px solid var(--app-border-light);
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  min-height: 52px;
+}
+
+.nav-back {
+  position: absolute;
+  left: var(--app-spacing-lg);
+  background: none;
+  border: none;
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--app-primary);
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: var(--app-radius-sm);
+  transition: background var(--app-duration) var(--app-ease);
+}
+
+.nav-back:active {
+  background: rgba(25, 200, 185, 0.12);
+}
+
+.nav-title {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--app-text);
+}
+
+.nav-right {
+  position: absolute;
+  right: var(--app-spacing-lg);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}

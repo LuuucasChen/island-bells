@@ -1,0 +1,44 @@
+.history-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.history-empty-icon {
+  font-size: 36px;
+  margin-bottom: 8px;
+}
+
+.history-item {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.history-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.history-code {
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--app-text);
+}
+
+.history-date {
+  font-size: 11px;
+  color: var(--app-text-secondary);
+}
+
+.history-body {
+  display: flex;
+  justify-content: space-between;
+  font-size: 13px;
+}
+
+.history-profit {
+  font-weight: 700;
+  color: var(--app-bell-gold);
+}

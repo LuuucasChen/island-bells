@@ -1,0 +1,221 @@
+/* 岛屿铃钱记 — 结算弹窗样式 */
+
+.showdown-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+  animation: showdownFadeIn 0.3s ease;
+  padding: 16px;
+}
+
+@keyframes showdownFadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.showdown-modal {
+  background: rgb(247, 243, 223);
+  border-radius: 24px;
+  border: 3px solid #c4b89e;
+  box-shadow: 0 8px 32px rgba(61, 52, 40, 0.25);
+  max-width: 420px;
+  width: 100%;
+  max-height: 85vh;
+  overflow-y: auto;
+  animation: showdownZoomIn 0.3s ease;
+}
+
+@keyframes showdownZoomIn {
+  from { opacity: 0; transform: scale(0.9); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+.showdown-header {
+  text-align: center;
+  padding: 20px 24px 8px;
+}
+
+.showdown-icon {
+  font-size: 36px;
+  margin-bottom: 4px;
+}
+
+.showdown-title {
+  font-size: 20px;
+  font-weight: 800;
+  color: #794f27;
+  margin: 0;
+  letter-spacing: 0.02em;
+}
+
+/* 统一的 section 样式 */
+.showdown-section {
+  padding: 8px 20px;
+}
+
+.showdown-section-label {
+  font-size: 12px;
+  font-weight: 700;
+  color: #9f927d;
+  margin-bottom: 6px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.showdown-cards-row {
+  display: flex;
+  gap: 6px;
+  justify-content: center;
+  padding: 4px 0;
+}
+
+/* 牌型标签 */
+.hand-type-badge {
+  font-size: 10px;
+  font-weight: 700;
+  color: #19c8b9;
+  background: rgba(25, 200, 185, 0.1);
+  padding: 2px 8px;
+  border-radius: 20px;
+}
+
+/* 赢家标签 */
+.winner-badge {
+  font-size: 10px;
+  font-weight: 700;
+  color: #f5c31c;
+  background: rgba(245, 195, 28, 0.15);
+  padding: 2px 8px;
+  border-radius: 20px;
+}
+
+/* 收获篮 */
+.showdown-pots {
+  padding: 4px 16px 12px;
+}
+
+.showdown-pot {
+  background: rgba(255, 255, 255, 0.5);
+  border: 2px solid #c4b89e;
+  border-radius: 16px;
+  padding: 10px 14px;
+  margin-bottom: 6px;
+}
+
+.pot-info {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 6px;
+}
+
+.pot-type-badge {
+  font-size: 12px;
+  font-weight: 700;
+  color: #794f27;
+}
+
+.pot-amount-display {
+  font-size: 16px;
+  font-weight: 800;
+  color: #f5c31c;
+}
+
+.pot-winner {
+  border-top: 1px solid rgba(196, 184, 158, 0.4);
+  padding-top: 6px;
+}
+
+.winner-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 0;
+}
+
+.winner-name {
+  font-size: 13px;
+  font-weight: 700;
+  color: #794f27;
+}
+
+.winner-amount {
+  font-size: 13px;
+  font-weight: 700;
+  color: #6fba2c;
+  margin-left: auto;
+}
+
+.winner-split {
+  font-size: 10px;
+  color: #9f927d;
+}
+
+.pot-eligible {
+  font-size: 12px;
+  color: #9f927d;
+  font-weight: 500;
+}
+
+.showdown-actions {
+  padding: 0 16px 16px;
+  display: flex;
+  gap: 8px;
+}
+
+.showdown-btn {
+  flex: 1;
+  padding: 10px 16px;
+  border-radius: 50px;
+  border: 2px solid #c4b89e;
+  font-size: 14px;
+  font-weight: 700;
+  font-family: inherit;
+  cursor: pointer;
+  transition: all 0.2s;
+  box-shadow: 0 3px 0 0 #bdaea0;
+}
+
+.showdown-btn:active {
+  transform: translateY(2px);
+  box-shadow: 0 1px 0 0 #bdaea0;
+}
+
+.showdown-btn-settle {
+  background: #f5c31c;
+  border-color: #f5c31c;
+  color: #794f27;
+}
+
+.showdown-btn-settle:hover {
+  background: #e0b800;
+  border-color: #e0b800;
+}
+
+.showdown-btn-newhand {
+  background: #19c8b9;
+  border-color: #19c8b9;
+  color: #fff;
+}
+
+.showdown-btn-newhand:hover {
+  background: #11a89b;
+  border-color: #11a89b;
+}
+
+/* 盖牌提示 */
+.showdown-mucked {
+  text-align: center;
+  padding: 12px 20px;
+}
+
+.showdown-mucked .showdown-section-label {
+  color: #9f927d;
+  font-style: italic;
+}

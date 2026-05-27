@@ -1,0 +1,112 @@
+/* 岛屿铃钱记 — 座位网格布局 */
+.seats-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--app-spacing-sm);
+  padding: var(--app-spacing-sm) 0;
+}
+
+.seats-wrap {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: var(--app-spacing-sm);
+  padding: var(--app-spacing-md);
+}
+
+.seat-card {
+  position: relative;
+  text-align: center;
+  padding: var(--app-spacing-md);
+  border-radius: var(--app-radius);
+  border: 2px solid var(--app-border-light);
+  background: var(--app-bg-content);
+  transition: all var(--app-duration) var(--app-ease);
+  cursor: pointer;
+}
+
+.seat-empty {
+  border-style: dashed;
+  background: var(--app-bg);
+  opacity: 0.7;
+}
+
+.seat-mine {
+  border-color: var(--app-bell-gold);
+  background: rgba(245, 195, 28, 0.06);
+  box-shadow: 0 0 0 3px rgba(245, 195, 28, 0.15);
+}
+
+.seat-folded {
+  opacity: 0.5;
+}
+
+.seat-allin {
+  border-color: var(--app-error);
+}
+
+.seat-avatar {
+  width: 36px;
+  height: 36px;
+  border-radius: var(--app-radius-sm);
+  border: 2px solid var(--app-border-light);
+  object-fit: cover;
+}
+
+.seat-nickname {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--app-text);
+  margin-top: 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.seat-bells {
+  font-size: 11px;
+  color: var(--app-text-secondary);
+}
+
+.seat-bet {
+  margin-top: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--app-primary);
+  background: rgba(25, 200, 185, 0.12);
+  padding: 2px 8px;
+  border-radius: var(--app-radius-pill);
+}
+
+.seat-role {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--app-radius-pill);
+  font-weight: 700;
+  font-size: 10px;
+  color: #fff;
+  min-width: 24px;
+  height: 18px;
+  padding: 0 6px;
+}
+
+.seat-plus {
+  font-size: 24px;
+  color: var(--app-text-secondary);
+}
+
+/* 当前行动者高亮 */
+.seat-turn {
+  border-color: var(--app-primary);
+  box-shadow: 0 0 0 3px rgba(25, 200, 185, 0.3), 0 0 12px rgba(25, 200, 185, 0.2);
+  animation: seatPulse 1.5s ease-in-out infinite;
+}
+
+@keyframes seatPulse {
+  0%, 100% { box-shadow: 0 0 0 3px rgba(25, 200, 185, 0.3), 0 0 12px rgba(25, 200, 185, 0.2); }
+  50% { box-shadow: 0 0 0 5px rgba(25, 200, 185, 0.4), 0 0 20px rgba(25, 200, 185, 0.3); }
+}

@@ -1,0 +1,276 @@
+import { create } from 'zustand'
+
+interface CardData {
+  suit: 'spades' | 'hearts' | 'diamonds' | 'clubs'
+  rank: number
+}
+
+interface Player {
+  player_id: number
+  user_id: number
+  nickname: string
+  avatar_url: string
+  seat_number: number
+  chip_count: number
+  bet_this_round: number
+  is_folded: boolean
+  role: string | null
+}
+
+interface Pot {
+  pot_id: number
+  pot_type: string
+  pot_level: number
+  amount: number
+}
+
+interface Evaluation {
+  hand_type: number
+  hand_type_name: string
+}
+
+interface HandState {
+  hand_id: number
+  hand_number: number
+  current_round: string
+  status: string
+  pot_total: number
+  turn_player_id: number | null
+  pots: Pot[]
+  players: Player[]
+  bets: any[]
+  community_cards: CardData[]
+  my_hole_cards: CardData[]
+  all_hole_cards: Record<string, CardData[]>
+  evaluations: Record<string, Evaluation>
+  ended_by_fold: boolean
+  muck_player_id: number | null
+  last_aggressor_id: number | null
+  revealed_players: number[]
+  mucked_players: number[]
+}
+
+interface GameState {
+  roomId: number
+  roomCode: string
+  roomName: string
+  roomStatus: string
+  ownerId: number
+  bbAmount: number
+  initialChips: number
+  currentHand: HandState | null
+  myUserId: number
+  isOwner: boolean
+  lobbyVersion: number  // 用于触发 lobby 重新加载
+  settleResults: { winner_id: number; amount_won: number; is_split: number }[] | null
+  /** 触发 showdown 翻牌动画 (由 WS round_advance 设置) */
+  showdownReveal: boolean
+  /** 牌局因 fold 结束 (WS 传入) */
+  endedByFold: boolean
+  /** 最终结算数据 (牌局结束时) */
+  finalSettlement: SettlementItem[] | null
+
+  loadRoom: (code: string) => Promise<void>
+  loadGameState: (roomId: number) => Promise<void>
+  sit: (roomId: number, seatNumber: number) => Promise<void>
+  stand: (roomId: number) => Promise<void>
+  startGame: (roomId: number) => Promise<void>
+  applyWsUpdate: (data: any) => void
+  reset: () => void
+}
+
+export interface SettlementItem {
+  player_id: number
+  user_id: number
+  nickname: string
+  initial_chips: number
+  final_chips: number
+  rebuy_total: number
+  net_profit: number
+}
+
+const API_BASE = '/v1'
+
+const getAuthHeaders = () => {
+  const token = localStorage.getItem('island-bells-auth')
+  if (token) {
+    try {
+      const parsed = JSON.parse(token)
+      return { Authorization: `Bearer ${parsed?.state?.token || ''}`, 'Content-Type': 'application/json' }
+    } catch { /* ignore */ }
+  }
+  return { 'Content-Type': 'application/json' }
+}
+
+export const useGameStore = create<GameState>()((set, get) => ({
+  roomId: 0,
+  roomCode: '',
+  roomName: '',
+  roomStatus: '',
+  ownerId: 0,
+  currentHand: null,
+  myUserId: 0,
+  isOwner: false,
+  lobbyVersion: 0,
+  bbAmount: 0,
+  initialChips: 0,
+  settleResults: null,
+  showdownReveal: false,
+  endedByFold: false,
+  finalSettlement: null,
+
+  loadRoom: async (code: string) => {
+    const headers = getAuthHeaders()
+    const res = await fetch(`${API_BASE}/rooms/${code}`, { headers })
+    if (!res.ok) {
+      throw new Error(`房间加载失败 (${res.status})`)
+    }
+    const data = await res.json()
+    const authData = JSON.parse(localStorage.getItem('island-bells-auth') || '{}')
+    const myUserId = authData?.state?.user?.id || 0
+    set({
+      roomId: data.room_id,
+      roomCode: data.room_code,
+      roomName: data.name || '',
+      roomStatus: data.status,
+      ownerId: data.owner_id,
+      myUserId,
+      isOwner: data.owner_id === myUserId,
+      initialChips: data.initial_chips || 10000,
+    })
+  },
+
+  loadGameState: async (roomId: number) => {
+    const headers = getAuthHeaders()
+    const res = await fetch(`${API_BASE}/rooms/${roomId}/state`, { headers })
+    if (!res.ok) {
+      throw new Error(`游戏状态加载失败 (${res.status})`)
+    }
+    const data = await res.json()
+    // 设置 owner 信息（如果 API 返回了）
+    if (data.owner_id) {
+      const authData = JSON.parse(localStorage.getItem('island-bells-auth') || '{}')
+      const myUserId = authData?.state?.user?.id || 0
+      set({
+        ownerId: data.owner_id,
+        myUserId,
+        isOwner: data.owner_id === myUserId,
+      })
+    }
+    set({
+      roomId: roomId,
+      roomName: data.room_name || '',
+      roomStatus: data.room_status,
+      currentHand: data.current_hand,
+      bbAmount: data.bb_amount || 0,
+      initialChips: data.initial_chips || 0,
+      finalSettlement: data.final_settlement || null,
+    })
+  },
+
+  sit: async (roomId: number, seatNumber: number) => {
+    const headers = getAuthHeaders()
+    const res = await fetch(`${API_BASE}/rooms/${roomId}/sit`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ seat_number: seatNumber }),
+    })
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}))
+      throw new Error(data.detail || '入座失败')
+    }
+    await get().loadGameState(roomId)
+  },
+
+  stand: async (roomId: number) => {
+    const headers = getAuthHeaders()
+    const res = await fetch(`${API_BASE}/rooms/${roomId}/stand`, {
+      method: 'POST',
+      headers,
+    })
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}))
+      throw new Error(data.detail || '站起失败')
+    }
+    await get().loadGameState(roomId)
+  },
+
+  startGame: async (roomId: number) => {
+    const headers = getAuthHeaders()
+    const res = await fetch(`${API_BASE}/rooms/${roomId}/start`, {
+      method: 'POST',
+      headers,
+    })
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}))
+      throw new Error(data.detail || '开始游戏失败')
+    }
+    await get().loadGameState(roomId)
+  },
+
+  applyWsUpdate: (data: any) => {
+    if (data.type === 'round_advance') {
+      const wsData = data.data || {}
+      // 进入 showdown: 触发翻牌动画
+      if (wsData.status === 'settling') {
+        set({ showdownReveal: true, endedByFold: !!wsData.ended_by_fold })
+      }
+      const roomId = get().roomId
+      get().loadGameState(roomId)
+    } else if (data.type === 'game_update' || data.type === 'new_hand') {
+      // BUG-1 修复: new_hand 时重置 showdownReveal，避免跨手牌残留
+      if (data.type === 'new_hand') {
+        set({ showdownReveal: false, endedByFold: false })
+      }
+      const roomId = get().roomId
+      get().loadGameState(roomId)
+    } else if (data.type === 'hand_settled') {
+      // 存储结算结果
+      if (data.data?.results) {
+        set({ settleResults: data.data.results, showdownReveal: false })
+      }
+      const roomId = get().roomId
+      get().loadGameState(roomId)
+    } else if (data.type === 'game_started') {
+      set({ roomStatus: 'playing', settleResults: null, showdownReveal: false, endedByFold: false })
+      // lobbyVersion 增加触发 lobby 跳转（由组件监听）
+      set({ lobbyVersion: get().lobbyVersion + 1 })
+    } else if (data.type === 'player_joined' || data.type === 'player_sat') {
+      // 触发 lobby 重新加载座位
+      set({ lobbyVersion: get().lobbyVersion + 1 })
+    } else if (data.type === 'muck_chosen') {
+      const roomId = get().roomId
+      get().loadGameState(roomId)
+    } else if (data.type === 'player_revealed') {
+      // Showdown 亮牌/盖牌事件: 刷新游戏状态
+      const roomId = get().roomId
+      get().loadGameState(roomId)
+    } else if (data.type === 'game_ended') {
+      // 牌局结束: 存储最终结算数据
+      if (data.data?.settlement) {
+        set({ finalSettlement: data.data.settlement, roomStatus: 'finished' })
+      }
+      const roomId = get().roomId
+      get().loadGameState(roomId)
+    }
+  },
+
+  reset: () => {
+    set({
+      roomId: 0,
+      roomCode: '',
+      roomName: '',
+      roomStatus: '',
+      ownerId: 0,
+      currentHand: null,
+      isOwner: false,
+      lobbyVersion: 0,
+      bbAmount: 0,
+      initialChips: 0,
+      settleResults: null,
+      showdownReveal: false,
+      endedByFold: false,
+      finalSettlement: null,
+    })
+  },
+}))

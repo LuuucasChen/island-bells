@@ -1,0 +1,36 @@
+version: '3.8'
+
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: island_bells_mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpassword
+      MYSQL_DATABASE: island_bells
+      MYSQL_USER: bells
+      MYSQL_PASSWORD: bellspass
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+    command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
+
+  backend:
+    build: .
+    container_name: island_bells_backend
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: mysql+pymysql://bells:bellspass@mysql:3306/island_bells?charset=utf8mb4
+      WECHAT_APPID: ${WECHAT_APPID}
+      WECHAT_SECRET: ${WECHAT_SECRET}
+      JWT_SECRET: ${JWT_SECRET:-change-me-in-production}
+    depends_on:
+      - mysql
+    volumes:
+      - ./app:/app/app
+
+volumes:
+  mysql_data:

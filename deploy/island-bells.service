@@ -1,0 +1,31 @@
+[Unit]
+Description=岛屿铃钱记 — FastAPI Backend (SQLite)
+After=network.target
+
+[Service]
+Type=simple
+User=www-data
+Group=www-data
+WorkingDirectory=/opt/island_bells/backend
+
+# SQLite 模式
+Environment=DATABASE_URL=sqlite:///./data/island_bells.db
+Environment=JWT_SECRET=CHANGE_ME_TO_A_RANDOM_STRING
+
+ExecStart=/opt/island_bells/backend/venv/bin/uvicorn \
+    app.main:app \
+    --host 127.0.0.1 \
+    --port 8000 \
+    --workers 1 \
+    --log-level info
+
+Restart=always
+RestartSec=5
+
+# 安全加固
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/opt/island_bells/backend/data
+
+[Install]
+WantedBy=multi-user.target

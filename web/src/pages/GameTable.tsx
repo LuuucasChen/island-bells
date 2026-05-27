@@ -1,0 +1,683 @@
+import { useEffect, useState, useRef, useCallback } from 'react'
+import { useParams, useNavigate } from 'react-router-dom'
+import { Button } from 'animal-island-ui'
+import {
+  CONCEPT_TERMS, ROLE_TERMS, formatBells, formatBellsWithIcon,
+  getRoundText, getRoundIcon,
+} from '@/utils/terms'
+import { useGameStore } from '@/stores/gameStore'
+import { useWebSocket } from '@/hooks/useWebSocket'
+import { useApi } from '@/hooks/useApi'
+import { PlayingCard } from '@/components/PlayingCard'
+import { CommunityCards } from '@/components/CommunityCards'
+import { ShowdownModal } from '@/components/ShowdownModal'
+import { FinalSettlementModal } from '@/components/FinalSettlementModal'
+import './GameTable.css'
+
+type ShowdownPhase = 'idle' | 'revealing' | 'muck_choice' | 'showing_cards' | 'auto_settling' | 'settled'
+
+function GameTable() {
+  const { roomId } = useParams<{ roomId: string }>()
+  const navigate = useNavigate()
+  const api = useApi()
+  const game = useGameStore()
+  const { connected } = useWebSocket(Number(roomId))
+
+  // Showdown orchestration state
+  const [showdownPhase, setShowdownPhase] = useState<ShowdownPhase>('idle')
+  const autoSettleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  const loadGame = async () => {
+    if (!roomId) return
+    try {
+      await game.loadGameState(Number(roomId))
+      // 如果加载时已经是 settling/settled (刷新页面场景)，且当前没有翻牌动画在进行，跳过翻牌
+      const h = useGameStore.getState().currentHand
+      const isRevealing = useGameStore.getState().showdownReveal
+      if (h && (h.status === 'settling' || h.status === 'settled') && showdownPhase === 'idle' && !isRevealing) {
+        setShowdownPhase('settled')
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  useEffect(() => {
+    loadGame()
+  }, [roomId])
+
+  // 每隔几秒刷新 (兜底，WS 断线时用)
+  useEffect(() => {
+    const timer = setInterval(loadGame, connected ? 30000 : 5000)
+    return () => clearInterval(timer)
+  }, [roomId, connected])
+
+  const hand = game.currentHand
+  const players = hand?.players || []
+  const currentRound = hand?.current_round || 'preflop'
+  const potTotal = hand?.pot_total || 0
+  const myUserId = game.myUserId
+  const isOwner = game.isOwner
+  const communityCards = hand?.community_cards || []
+  const myHoleCards = hand?.my_hole_cards || []
+  const evaluations = hand?.evaluations || {}
+  const turnPlayerId = hand?.turn_player_id
+  const endedByFold = game.endedByFold || hand?.ended_by_fold || false
+  const muckPlayerId = hand?.muck_player_id
+
+  // 找到当前需要操作的玩家（基于后端 turn_player_id）
+  const myPlayer = players.find((p) => p.user_id === myUserId)
+  const isMyTurn = myPlayer && turnPlayerId === myPlayer.player_id && hand?.status === 'betting'
+
+  // === Showdown orchestration ===
+  // When store signals showdownReveal, start the reveal phase
+  useEffect(() => {
+    if (game.showdownReveal && showdownPhase === 'idle') {
+      setShowdownPhase('revealing')
+    }
+  }, [game.showdownReveal])
+
+  // After reveal completes: fold → muck_choice, non-fold → inline card display
+  const handleRevealComplete = useCallback(() => {
+    if (endedByFold && myPlayer) {
+      // fold 局: 唯一赢家选择是否展示
+      const alivePlayers = players.filter((p) => !p.is_folded)
+      if (alivePlayers.length === 1 && alivePlayers[0].player_id === myPlayer.player_id) {
+        setShowdownPhase('muck_choice')
+        return
+      }
+      setShowdownPhase('auto_settling')
+      return
+    }
+    // 非 fold 局: 直接在座位中展示所有存活玩家手牌 (4 秒)
+    setShowdownPhase('showing_cards')
+  }, [endedByFold, myPlayer, players])
+
+  const doAutoSettle = async () => {
+    try {
+      await api.post(`/rooms/${roomId}/settle`)
+      await loadGame()
+      setShowdownPhase('settled')
+    } catch (e) {
+      // BUG-4 修复: 失败时不回退到 idle，保持 auto_settling，依赖手动结算按钮
+      console.error('自动结算失败，请岛主手动结算:', e)
+    }
+  }
+
+  const handleShowCards = async () => {
+    // fold 局赢家选择展示手牌 → 调 reveal API，不直接调 /settle
+    try {
+      await api.post(`/rooms/${roomId}/reveal`, { action: 'show' })
+      await loadGame()
+    } catch { /* ignore */ }
+    // BUG-3 修复: 统一由 auto_settling useEffect 处理结算
+    setShowdownPhase('auto_settling')
+  }
+
+  const handleMuck = async () => {
+    // fold 局赢家选择盖牌
+    try {
+      await api.post(`/rooms/${roomId}/muck`)
+      await loadGame()
+    } catch { /* ignore */ }
+    // BUG-3 修复: 统一由 auto_settling useEffect 处理结算
+    setShowdownPhase('auto_settling')
+  }
+
+  // === Inline card display timer (6s) ===
+  const [viewCountdown, setViewCountdown] = useState(6)
+  const viewTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
+
+  useEffect(() => {
+    if (showdownPhase !== 'showing_cards') {
+      setViewCountdown(6)
+      if (viewTimerRef.current) { clearInterval(viewTimerRef.current); viewTimerRef.current = null }
+      return
+    }
+    setViewCountdown(6)
+    viewTimerRef.current = setInterval(() => {
+      setViewCountdown((prev) => {
+        if (prev <= 1) {
+          if (viewTimerRef.current) { clearInterval(viewTimerRef.current); viewTimerRef.current = null }
+          setShowdownPhase('auto_settling')
+          return 0
+        }
+        return prev - 1
+      })
+    }, 1000)
+    return () => {
+      if (viewTimerRef.current) { clearInterval(viewTimerRef.current); viewTimerRef.current = null }
+    }
+  }, [showdownPhase])
+  
+  // 统一岛主自动结算: phase=auto_settling 且是岛主 → 2s 后调 /settle
+  // BUG-3 修复: 替代所有分散的 doAutoSettle() 调用
+  useEffect(() => {
+    if (showdownPhase !== 'auto_settling' || !game.isOwner) return
+    if (autoSettleTimerRef.current) clearTimeout(autoSettleTimerRef.current)
+    autoSettleTimerRef.current = setTimeout(() => doAutoSettle(), 2000)
+    return () => {
+      if (autoSettleTimerRef.current) clearTimeout(autoSettleTimerRef.current)
+    }
+  }, [showdownPhase, game.isOwner])
+  
+  // 非岛主: 当岛主结算完成的自动进入 settled (补充原有逻辑)
+  useEffect(() => {
+    if (showdownPhase === 'auto_settling' && game.settleResults && hand?.status === 'settled') {
+      setShowdownPhase('settled')
+    }
+  }, [showdownPhase, game.settleResults, hand?.status])
+
+  // Cleanup timers
+  useEffect(() => {
+    return () => {
+      if (autoSettleTimerRef.current) clearTimeout(autoSettleTimerRef.current)
+    }
+  }, [])
+
+  // Reset phase when new hand starts
+  useEffect(() => {
+    if (hand?.status === 'betting' || game.roomStatus === 'waiting') {
+      setShowdownPhase('idle')
+      setShowdownDismissed(false)
+    }
+  }, [hand?.hand_id])
+
+  // 非岛主: 当岛主完成结算后 (WS hand_settled)，自动进入 settled 阶段
+  useEffect(() => {
+    if (game.settleResults && hand?.status === 'settled'
+      && (showdownPhase === 'idle' || showdownPhase === 'auto_settling' || showdownPhase === 'revealing')) {
+      setShowdownPhase('settled')
+    }
+  }, [game.settleResults, hand?.status])
+
+  // 动态计算加注金额
+  const bbAmount = useGameStore((s) => s.bbAmount) || 100
+  const myBetThisRound = myPlayer?.bet_this_round || 0
+  const myChips = myPlayer?.chip_count || 0
+  const currentMaxBet = Math.max(...players.map((p) => p.bet_this_round), 0)
+  const toCall = Math.max(currentMaxBet - myBetThisRound, 0)
+  const minLegalRaise = Math.max(currentMaxBet + bbAmount - myBetThisRound, bbAmount)
+  const quickAmounts = [minLegalRaise, minLegalRaise * 2, minLegalRaise * 5].filter(
+    (amt, i, arr) => arr.indexOf(amt) === i && amt <= myChips
+  )
+
+  // 自定义加注金额
+  const [customAmount, setCustomAmount] = useState('')
+  const [customError, setCustomError] = useState('')
+
+  const validateCustomRaise = (): number | null => {
+    const amt = parseInt(customAmount, 10)
+    if (isNaN(amt) || amt <= 0) {
+      setCustomError('请输入有效数字')
+      return null
+    }
+    if (amt > myChips) {
+      setCustomError(`不能超过你的铃钱 (${formatBells(myChips)})`)
+      return null
+    }
+    if (amt < minLegalRaise && amt < myChips) {
+      setCustomError(`最少追加 ${formatBells(minLegalRaise)}`)
+      return null
+    }
+    setCustomError('')
+    return amt
+  }
+
+  const handleCustomRaise = () => {
+    const amt = validateCustomRaise()
+    if (amt !== null) {
+      handleAction('raise', amt)
+      setCustomAmount('')
+    }
+  }
+
+  const handleAction = async (action: string, amount?: number) => {
+    try {
+      await api.post(`/rooms/${roomId}/action`, {
+        action,
+        amount: amount || undefined,
+      })
+      await loadGame()
+    } catch (e) {
+      alert('操作失败: ' + (e as Error).message)
+    }
+  }
+
+  const handleSettle = async () => {
+    try {
+      await api.post(`/rooms/${roomId}/settle`)
+      await loadGame()
+      setShowdownPhase('settled')
+    } catch (e) {
+      alert('收获失败: ' + (e as Error).message)
+    }
+  }
+
+  const handleNewHand = async () => {
+    try {
+      await api.post(`/rooms/${roomId}/new-hand`)
+      setShowdownPhase('idle')
+      await loadGame()
+    } catch (e) {
+      alert('开始新一季失败: ' + (e as Error).message)
+    }
+  }
+
+  // 补给铃钱 (输光后)
+  const initialChips = useGameStore((s) => s.initialChips) || 10000
+  const [showdownDismissed, setShowdownDismissed] = useState(false)
+  // busted = 输光 + 结算已完成 + 结算弹窗已关闭 (先看结算，再看补给)
+  const isBusted = showdownPhase === 'settled' && myPlayer
+    && myPlayer.chip_count <= 0 && showdownDismissed
+  const [rebuyCountdown, setRebuyCountdown] = useState(10)
+  const rebuyTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
+
+  // 刷新页面时如果已经是 settled + busted，直接跳过结算弹窗
+  useEffect(() => {
+    if (showdownPhase === 'settled' && myPlayer && myPlayer.chip_count <= 0 && !showdownDismissed) {
+      const h = useGameStore.getState().currentHand
+      if (h?.status === 'settled') {
+        setShowdownDismissed(true)
+      }
+    }
+  }, [showdownPhase])
+
+  // 补给倒计时: 10秒内不选择则自动离岛
+  useEffect(() => {
+    if (!isBusted) {
+      setRebuyCountdown(10)
+      if (rebuyTimerRef.current) { clearInterval(rebuyTimerRef.current); rebuyTimerRef.current = null }
+      return
+    }
+    setRebuyCountdown(10)
+    rebuyTimerRef.current = setInterval(() => {
+      setRebuyCountdown((prev) => {
+        if (prev <= 1) {
+          if (rebuyTimerRef.current) { clearInterval(rebuyTimerRef.current); rebuyTimerRef.current = null }
+          handleStand()
+          return 0
+        }
+        return prev - 1
+      })
+    }, 1000)
+    return () => {
+      if (rebuyTimerRef.current) { clearInterval(rebuyTimerRef.current); rebuyTimerRef.current = null }
+    }
+  }, [isBusted])
+
+  const handleRebuy = async () => {
+    if (rebuyTimerRef.current) { clearInterval(rebuyTimerRef.current); rebuyTimerRef.current = null }
+    try {
+      await api.post(`/rooms/${roomId}/rebuy`, { amount: initialChips })
+      await loadGame()
+    } catch (e) {
+      alert('补给失败: ' + (e as Error).message)
+    }
+  }
+
+  const handleStand = async () => {
+    if (rebuyTimerRef.current) { clearInterval(rebuyTimerRef.current); rebuyTimerRef.current = null }
+    try {
+      await api.post(`/rooms/${roomId}/stand`)
+      navigate(`/lobby/${game.roomCode}`)
+    } catch (e) {
+      alert('离岛失败: ' + (e as Error).message)
+    }
+  }
+
+  // === 最终结算 ===
+  const [showFinalSettle, setShowFinalSettle] = useState(false)
+
+  const handleFinalSettle = async () => {
+    try {
+      await api.post(`/rooms/${roomId}/end-game`)
+      await loadGame()
+      setShowFinalSettle(true)
+    } catch (e) {
+      alert('最终结算失败: ' + (e as Error).message)
+    }
+  }
+
+  // 如果进入页面时牌局已结束 (刷新场景)，自动显示最终结算
+  useEffect(() => {
+    if (game.roomStatus === 'finished' && game.finalSettlement && !showFinalSettle) {
+      setShowFinalSettle(true)
+    }
+  }, [game.roomStatus, game.finalSettlement])
+
+  // all_hole_cards for inline display during showing_cards phase
+  const allHoleCards = hand?.all_hole_cards || {}
+  const showInlineCards = showdownPhase === 'showing_cards'
+
+  // 根据 evaluations 计算最佳牌型（赢家）
+  const bestHandPlayerId = (() => {
+    if (!evaluations || Object.keys(evaluations).length === 0) return null
+    let bestId: number | null = null
+    let bestType = -1
+    for (const [pid, ev] of Object.entries(evaluations)) {
+      if (ev.hand_type > bestType) {
+        bestType = ev.hand_type
+        bestId = Number(pid)
+      }
+    }
+    return bestId
+  })()
+
+  // === 动态座位布局 ===
+  const sortedPlayers = [...players].sort((a, b) => a.seat_number - b.seat_number)
+  const halfCount = Math.ceil(sortedPlayers.length / 2)
+  const topPlayers = sortedPlayers.slice(0, halfCount)
+  const bottomPlayers = sortedPlayers.slice(halfCount)
+
+  // 是否显示 showdown 弹窗 (仅在翻牌动画+结算完成后)
+  const showShowdownModal = showdownPhase === 'settled' && (hand?.status === 'settled')
+
+  return (
+    <div className="game-page">
+      {/* Phase Bar — 岛屿名 + 阶段 + 收获篮 */}
+      <div className={`phase-bar phase-${currentRound}`}>
+        <div className="phase-island-name">
+          <span>🏝️</span>
+          <span>{game.roomName || ''}</span>
+        </div>
+        <div className="phase-indicator">
+          <span className="phase-icon">{getRoundIcon(currentRound)}</span>
+          <span className="phase-text">{getRoundText(currentRound)}</span>
+          {hand && <span className="phase-hand-num">第 {hand.hand_number} 季</span>}
+        </div>
+        <div className="pot-display">
+          <div className="pot-label">{CONCEPT_TERMS.pot}</div>
+          <div className="pot-amount">{formatBellsWithIcon(potTotal)}</div>
+        </div>
+      </div>
+
+      {/* WS indicator */}
+      <div className="ws-indicator">{connected ? '🟢 已连接' : '🔴 断线'}</div>
+
+      {/* Table Area */}
+      <div className="table-area">
+        <div className="poker-table">
+          {/* Top row players */}
+          <div className="players-row players-top">
+            {topPlayers.map((player) => (
+              <PlayerSeat
+                key={player.player_id}
+                player={player}
+                isMe={player.user_id === myUserId}
+                isTurn={turnPlayerId === player.player_id}
+                isShowdown={showShowdownModal}
+                myUserId={myUserId}
+                players={players}
+                evaluations={evaluations}
+                inlineCards={showInlineCards ? (allHoleCards[String(player.player_id)] || null) : null}
+                isBestHand={showInlineCards && player.player_id === bestHandPlayerId}
+              />
+            ))}
+          </div>
+
+          {/* Center: Community cards + Pot */}
+          <div className="table-center">
+            <CommunityCards
+              cards={communityCards}
+              currentRound={currentRound}
+              revealing={showdownPhase === 'revealing'}
+              onRevealComplete={handleRevealComplete}
+            />
+            <div className="center-pot">
+              <span className="center-pot-label">底池</span>
+              <span className="center-pot-amount">{formatBells(potTotal)}</span>
+            </div>
+          </div>
+
+          {/* Bottom row players */}
+          <div className="players-row players-bottom">
+            {bottomPlayers.map((player) => (
+              <PlayerSeat
+                key={player.player_id}
+                player={player}
+                isMe={player.user_id === myUserId}
+                isTurn={turnPlayerId === player.player_id}
+                isShowdown={showShowdownModal}
+                myUserId={myUserId}
+                players={players}
+                evaluations={evaluations}
+                inlineCards={showInlineCards ? (allHoleCards[String(player.player_id)] || null) : null}
+                isBestHand={showInlineCards && player.player_id === bestHandPlayerId}
+              />
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* My hole cards (large, at bottom) — 左侧铃铛数量 */}
+      {myHoleCards.length > 0 && (
+        <div className="my-hole-cards">
+          <div className="my-bells">
+            <span className="my-bells-icon">🔔</span>
+            <span className="my-bells-amount">{formatBells(myChips)}</span>
+          </div>
+          {myHoleCards.map((card, i) => (
+            <PlayingCard key={i} suit={card.suit} rank={card.rank} size="large" />
+          ))}
+        </div>
+      )}
+
+      {/* Muck choice overlay (fold winner decides whether to show cards) */}
+      {showdownPhase === 'muck_choice' && (
+        <div className="muck-overlay">
+          <div className="muck-dialog">
+            <div className="muck-title">你赢了这局!</div>
+            <div className="muck-subtitle">是否展示你的手牌?</div>
+            <div className="muck-buttons">
+              <Button type="primary" onClick={handleShowCards}>展示手牌</Button>
+              <Button type="default" onClick={handleMuck}>盖牌</Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Auto-settling indicator */}
+      {showdownPhase === 'auto_settling' && (
+        <div className="auto-settle-toast">正在结算...</div>
+      )}
+
+      {/* Inline card display: showing_cards phase shows cards in player seats */}
+      {showdownPhase === 'showing_cards' && (
+        <div className="auto-settle-toast">
+          亮牌展示 {viewCountdown > 0 ? `${viewCountdown}s` : '...'}
+        </div>
+      )}
+
+      {/* Action Panel — 始终渲染，固定高度防晃动 */}
+      <div className="action-panel">
+        {game.roomStatus === 'playing' && isMyTurn && (
+          <>
+            {/* 快捷操作行: 平call / check + raise 预设 */}
+            <div className="quick-amounts">
+              {toCall > 0 ? (
+                <button className="quick-chip quick-chip-call" onClick={() => handleAction('call')}>
+                  平call +{formatBells(toCall)}
+                </button>
+              ) : (
+                <button className="quick-chip quick-chip-check" onClick={() => handleAction('check')}>
+                  check
+                </button>
+              )}
+              <span className="quick-raise-label">raise:</span>
+              {quickAmounts.map((amt) => (
+                <button key={amt} className="quick-chip" onClick={() => handleAction('raise', amt)}>
+                  +{formatBells(amt)}
+                </button>
+              ))}
+            </div>
+            {/* 自定义加注 */}
+            <div className="custom-raise">
+              <input
+                type="number"
+                className="custom-raise-input"
+                placeholder={`自定义 (最少${formatBells(minLegalRaise)})`}
+                value={customAmount}
+                onChange={(e) => { setCustomAmount(e.target.value); setCustomError('') }}
+                onKeyDown={(e) => e.key === 'Enter' && handleCustomRaise()}
+              />
+              <button className="custom-raise-btn" onClick={handleCustomRaise}>追加</button>
+            </div>
+            {customError && <div className="custom-raise-error">{customError}</div>}
+            {/* 主操作按钮: fold + all in */}
+            <div className="action-buttons">
+              <button className="action-btn action-btn-fold" onClick={() => handleAction('fold')}>
+                fold
+              </button>
+              <button className="action-btn action-btn-allin" onClick={() => handleAction('allin')}>
+                all in
+              </button>
+            </div>
+          </>
+        )}
+
+        {game.roomStatus === 'playing' && !isMyTurn && turnPlayerId && (
+          <div className="app-empty">
+            等待 {players.find((p) => p.player_id === turnPlayerId)?.nickname || '其他居民'} 行动...
+          </div>
+        )}
+        {game.roomStatus === 'playing' && !isMyTurn && !turnPlayerId && hand?.status === 'betting' && (
+          <div className="app-empty">即将自动推进到下一阶段...</div>
+        )}
+
+        {/* Fallback: owner can manually settle if auto-settle failed */}
+        {isOwner && hand?.status === 'settling' && showdownPhase === 'idle' && (
+          <div className="owner-controls">
+            <button className="owner-btn" onClick={handleSettle}>
+              🎉 手动结算
+            </button>
+          </div>
+        )}
+      </div>
+
+      {/* Showdown Modal */}
+      {showShowdownModal && (
+        <ShowdownModal
+          pots={hand?.pots || []}
+          players={players}
+          communityCards={communityCards}
+          myHoleCards={myHoleCards}
+          allHoleCards={hand?.all_hole_cards || {}}
+          evaluations={evaluations}
+          results={game.settleResults || []}
+          isOwner={isOwner}
+          onSettle={handleSettle}
+          onNewHand={handleNewHand}
+          onFinalSettle={isOwner ? handleFinalSettle : undefined}
+          settled={hand?.status === 'settled'}
+          myUserId={myUserId}
+          endedByFold={endedByFold}
+          muckPlayerId={muckPlayerId}
+          onBustClose={myPlayer && myPlayer.chip_count <= 0 ? () => setShowdownDismissed(true) : undefined}
+        />
+      )}
+
+      {/* Busted Rebuy Dialog */}
+      {isBusted && (
+        <div className="muck-overlay">
+          <div className="rebuy-dialog">
+            <div className="rebuy-icon">🔔</div>
+            <div className="rebuy-title">铃钱耗尽!</div>
+            <div className="rebuy-subtitle">
+              你的铃钱已经用完了，是否补给继续冒险?
+            </div>
+            <div className="rebuy-amount">
+              补给 {formatBells(initialChips)} 铃钱
+            </div>
+            <div className="rebuy-countdown">
+              {rebuyCountdown > 0
+                ? `${rebuyCountdown}秒后自动离岛`
+                : '正在离岛...'}
+            </div>
+            <div className="rebuy-buttons">
+              <button className="rebuy-btn rebuy-btn-yes" onClick={handleRebuy}>
+                🌟 补给铃钱
+              </button>
+              <button className="rebuy-btn rebuy-btn-no" onClick={handleStand}>
+                🏝️ 离岛
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Final Settlement Modal */}
+      {showFinalSettle && game.finalSettlement && (
+        <FinalSettlementModal
+          settlement={game.finalSettlement}
+          myUserId={myUserId}
+          onClose={() => navigate('/')}
+        />
+      )}
+    </div>
+  )
+}
+
+// === 玩家座位组件 ===
+interface PlayerSeatProps {
+  player: any
+  isMe: boolean
+  isTurn: boolean
+  isShowdown: boolean
+  myUserId: number
+  players: any[]
+  evaluations: Record<string, { hand_type: number; hand_type_name: string }>
+  inlineCards?: { suit: 'spades' | 'hearts' | 'diamonds' | 'clubs'; rank: number }[] | null
+  isBestHand?: boolean
+}
+
+function PlayerSeat({ player, isMe, isTurn, isShowdown, myUserId, players, evaluations, inlineCards, isBestHand }: PlayerSeatProps) {
+  const isFolded = player.is_folded
+  const isAllin = player.chip_count === 0 && !isFolded
+
+  let seatClass = 'seat-card'
+  if (isMe) seatClass += ' seat-mine'
+  if (isFolded) seatClass += ' seat-folded'
+  if (isAllin) seatClass += ' seat-allin'
+  if (isTurn) seatClass += ' seat-turn'
+
+  const eval_ = evaluations[String(player.player_id)]
+
+  return (
+    <div className={seatClass}>
+      {player.role && (
+        <span className="seat-role" style={{
+          background: player.role === 'D' ? '#f5c31c' :
+            player.role === 'SB' ? '#6fba2c' : '#19c8b9'
+        }}>
+          {ROLE_TERMS[player.role] || player.role}
+        </span>
+      )}
+      <div className="seat-nickname">{player.nickname}</div>
+      <div className="seat-bells">🔔 {formatBells(player.chip_count)}</div>
+      {player.bet_this_round > 0 && (
+        <div className="seat-bet">
+          下注 {formatBells(player.bet_this_round)}
+        </div>
+      )}
+      {isFolded && <div className="seat-status">已弃牌</div>}
+      {isAllin && <div className="seat-status seat-allin-text">All-in</div>}
+      {/* Inline card display during showing_cards phase */}
+      {inlineCards && inlineCards.length > 0 && (
+        <div className="seat-inline-cards">
+          {inlineCards.map((card, i) => (
+            <PlayingCard key={i} suit={card.suit} rank={card.rank} size="small" />
+          ))}
+        </div>
+      )}
+      {isBestHand && (
+        <div className="seat-winner-badge">🏆</div>
+      )}
+      {eval_ && isShowdown && !isFolded && (
+        <div className="seat-eval">{eval_.hand_type_name}</div>
+      )}
+    </div>
+  )
+}
+
+export default GameTable

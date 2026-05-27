@@ -1,0 +1,46 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+dist/
+build/
+.eggs/
+*.egg
+venv/
+env/
+.venv/
+
+# Database
+*.db
+*.sqlite3
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+.env.local
+.env.production
+
+# Logs
+*.log
+
+# Node (web frontend)
+web/node_modules/
+web/dist/
+_reference_ui/node_modules/
+_reference_ui/dist/
+_ref_ui/node_modules/
+_ref_ui/dist/
+
+# Miniprogram
+miniprogram/miniprogram_npm/

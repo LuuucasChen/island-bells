@@ -1,0 +1,134 @@
+/* 岛屿铃钱记 — 全局样式 (Mobile-first) */
+@import url('https://fonts.googleapis.com/css2?family=Nunito:wght@500;600;700&family=Noto+Sans+SC:wght@400;500;600&display=swap');
+
+:root {
+  --app-bg: #f8f8f0;
+  --app-text: #794f27;
+  --app-text-body: #725d42;
+  --app-text-secondary: #9f927d;
+  --app-primary: #19c8b9;
+  --app-primary-hover: #3dd4c6;
+  --app-primary-active: #11a89b;
+  --app-error: #e05a5a;
+  --app-success: #6fba2c;
+  --app-warning: #f5c31c;
+  --app-bell-gold: #f5c31c;
+  --app-bg-content: #fdfdf5;
+  --app-border: #9f927d;
+  --app-border-light: #c4b89e;
+  --app-radius: 18px;
+  --app-radius-sm: 12px;
+  --app-radius-pill: 50px;
+  --app-shadow-btn: #bdaea0;
+  --app-spacing-xs: 4px;
+  --app-spacing-sm: 8px;
+  --app-spacing-md: 12px;
+  --app-spacing-lg: 16px;
+  --app-spacing-xl: 24px;
+  --app-duration: 0.25s;
+  --app-ease: cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  font-family: 'Nunito', 'Noto Sans SC', -apple-system, 'PingFang SC', sans-serif;
+  font-weight: 500;
+  color: var(--app-text-body);
+  background-color: var(--app-bg);
+  line-height: 1.5;
+  margin: 0;
+  padding: 0;
+  -webkit-font-smoothing: antialiased;
+  max-width: 100vw;
+  overflow-x: hidden;
+}
+
+#root {
+  min-height: 100vh;
+  min-height: 100dvh;
+}
+
+a { color: var(--app-primary); text-decoration: none; }
+
+.app-page {
+  padding: var(--app-spacing-lg);
+  padding-bottom: calc(var(--app-spacing-xl) + env(safe-area-inset-bottom, 0px));
+  min-height: 100vh;
+  min-height: 100dvh;
+}
+
+.app-title {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--app-text);
+}
+
+.app-subtitle {
+  font-size: 13px;
+  color: var(--app-text-secondary);
+}
+
+.app-section {
+  margin-bottom: var(--app-spacing-xl);
+}
+
+.app-row {
+  display: flex;
+  gap: var(--app-spacing-sm);
+}
+
+.app-column {
+  display: flex;
+  flex-direction: column;
+  gap: var(--app-spacing-md);
+}
+
+.app-bells {
+  font-weight: 700;
+  color: var(--app-bell-gold);
+}
+
+.app-empty {
+  text-align: center;
+  padding: 48px 16px;
+  color: var(--app-text-secondary);
+}
+
+/* 输入框 + 随机按钮组合 */
+.input-with-random {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.input-with-random > :first-child {
+  flex: 1;
+}
+
+.random-btn {
+  flex-shrink: 0;
+  width: 42px;
+  height: 42px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50px;
+  background: var(--app-bg);
+  border: 2px solid var(--app-border-light);
+  font-size: 18px;
+  cursor: pointer;
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  box-shadow: 0 3px 0 0 #bdaea0;
+}
+
+.random-btn:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 0 0 #bdaea0;
+  border-color: var(--app-primary);
+}
+
+.random-btn:active {
+  transform: translateY(2px);
+  box-shadow: 0 1px 0 0 #bdaea0;
+}
