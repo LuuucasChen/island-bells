@@ -1,6 +1,7 @@
 [Unit]
-Description=岛屿铃钱记 — FastAPI Backend (SQLite)
-After=network.target
+Description=岛屿铃钱记 — FastAPI Backend (MySQL)
+After=network.target docker.service
+Requires=docker.service
 
 [Service]
 Type=simple
@@ -8,16 +9,24 @@ User=www-data
 Group=www-data
 WorkingDirectory=/opt/island_bells/backend
 
-# SQLite 模式
-Environment=DATABASE_URL=sqlite:///./data/island_bells.db
-Environment=JWT_SECRET=CHANGE_ME_TO_A_RANDOM_STRING
+# 从 .env 文件加载环境变量
+EnvironmentFile=/opt/island_bells/deploy/.env
+Environment=APP_ENV=prod
+
+# 日志目录
+LogsDirectory=island_bells
 
 ExecStart=/opt/island_bells/backend/venv/bin/uvicorn \
     app.main:app \
     --host 127.0.0.1 \
     --port 8000 \
-    --workers 1 \
-    --log-level info
+    --workers 2 \
+    --log-level warning \
+    --access-log
+
+# 标准输出追加到日志文件
+StandardOutput=append:/opt/island_bells/logs/backend.log
+StandardError=append:/opt/island_bells/logs/backend-error.log
 
 Restart=always
 RestartSec=5
@@ -25,7 +34,7 @@ RestartSec=5
 # 安全加固
 NoNewPrivileges=true
 ProtectSystem=strict
-ReadWritePaths=/opt/island_bells/backend/data
+ReadWritePaths=/opt/island_bells/backend/data /opt/island_bells/logs
 
 [Install]
 WantedBy=multi-user.target

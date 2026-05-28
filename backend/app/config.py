@@ -5,12 +5,12 @@ from typing import Optional
 
 
 class Settings(BaseSettings):
-    # 数据库
-    DATABASE_URL: str = "mysql+pymysql://bells:bellspass@localhost:3306/island_bells?charset=utf8mb4"
+    # 环境: dev(本地SQLite) / prod(云端MySQL)
+    APP_ENV: str = "dev"
 
-    # 微信小程序
-    WECHAT_APPID: str = ""
-    WECHAT_SECRET: str = ""
+    # 数据库
+    # dev 模式默认 SQLite，prod 模式通过 .env 设置 MySQL 连接串
+    DATABASE_URL: str = "sqlite:///./dev.db"
 
     # JWT
     JWT_SECRET: str = "change-me-in-production"

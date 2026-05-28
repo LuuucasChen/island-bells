@@ -5,15 +5,19 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
+from app.database import Base, engine
 from app.api.v1 import auth, room, game, history
 from app.api.ws import game_ws
+# 导入所有模型，确保 SQLAlchemy 知道它们的存在
+from app.models import User, Room, RoomPlayer, Hand, Bet, Pot, HandResult, Rebuy  # noqa: F401
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup
+    # 启动时自动建表（如果不存在）
+    Base.metadata.create_all(bind=engine)
     yield
-    # Shutdown
+    # 关闭时清理资源
 
 
 app = FastAPI(

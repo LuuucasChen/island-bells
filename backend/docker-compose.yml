@@ -1,3 +1,10 @@
+# 岛屿铃钱记 — MySQL 容器配置
+# 方案 B: 仅用 Docker 跑 MySQL，后端直接运行在宿主机
+#
+# 启动: docker-compose up -d
+# 停止: docker-compose down
+# 数据: 持久化在 island_bells_data 卷中
+
 version: '3.8'
 
 services:
@@ -6,31 +13,15 @@ services:
     container_name: island_bells_mysql
     restart: unless-stopped
     environment:
-      MYSQL_ROOT_PASSWORD: rootpassword
-      MYSQL_DATABASE: island_bells
-      MYSQL_USER: bells
-      MYSQL_PASSWORD: bellspass
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-tanukichi_root}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-island_bells}
+      MYSQL_USER: ${MYSQL_USER:-bells}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-nookring2024}
     ports:
       - "3306:3306"
     volumes:
       - mysql_data:/var/lib/mysql
     command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
-
-  backend:
-    build: .
-    container_name: island_bells_backend
-    restart: unless-stopped
-    ports:
-      - "8000:8000"
-    environment:
-      DATABASE_URL: mysql+pymysql://bells:bellspass@mysql:3306/island_bells?charset=utf8mb4
-      WECHAT_APPID: ${WECHAT_APPID}
-      WECHAT_SECRET: ${WECHAT_SECRET}
-      JWT_SECRET: ${JWT_SECRET:-change-me-in-production}
-    depends_on:
-      - mysql
-    volumes:
-      - ./app:/app/app
 
 volumes:
   mysql_data:

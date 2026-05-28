@@ -3,12 +3,6 @@
 from pydantic import BaseModel
 
 
-class LoginRequest(BaseModel):
-    code: str
-    nickname: str = ""
-    avatar_url: str = ""
-
-
 class LoginResponse(BaseModel):
     token: str
     user: dict
