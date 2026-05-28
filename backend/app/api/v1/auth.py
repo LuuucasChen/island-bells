@@ -81,7 +81,9 @@ async def login(req: LoginRequest, db: Session = Depends(get_db)):
 async def demo_login(req: DemoLoginRequest, db: Session = Depends(get_db)):
     """网页版 Demo 登录：无需微信，直接创建用户并返回 JWT"""
     openid = f"demo_web_{uuid.uuid4().hex[:8]}"
-    nickname = req.nickname or "居民"
+    # 未提供昵称时随机生成动森角色名
+    from app.utils.animal_names import get_random_character_name
+    nickname = req.nickname if req.nickname and req.nickname != "居民" else get_random_character_name()
 
     user = User(
         openid=openid,

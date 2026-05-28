@@ -18,19 +18,19 @@ function HomePage() {
         <div className="home-hero">
           <div className="home-bell-icon">🔔</div>
           <h1 className="home-title">岛屿铃钱记</h1>
-          <p className="home-desc">线下铃钱管理助手，让每一季的收获都清晰可见</p>
+          <p className="home-desc">围坐牌桌比大小，铃钱输赢一键记</p>
         </div>
 
         {/* 登录状态 */}
         {user && (
           <div className="home-welcome">
             <span className="home-welcome-avatar">🐾</span>
-            <span>欢迎，<strong>{nickname}</strong></span>
+            <span><strong>{nickname}</strong>，欢迎回到岛屿！</span>
           </div>
         )}
 
         {!user && !loading && (
-          <button className="home-login-btn" onClick={() => demoLogin('居民')}>
+          <button className="home-login-btn" onClick={() => demoLogin()}>
             <span className="home-login-btn-icon">🏝️</span>
             <span>开始登岛</span>
           </button>

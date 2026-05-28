@@ -726,17 +726,8 @@ class HandEngine:
 
         # 如果到达 showdown (5 张公共牌)，自动评估牌力
         if len(community) >= 5 and len(alive_ids) > 1:
-            # 亮牌阶段: 仅比较选择亮牌的玩家
-            revealed_ids = None
-            if hand.revealed_players:
-                revealed_ids = {int(x) for x in hand.revealed_players.split(",") if x}
-
-            # 如果有亮牌数据，仅比较亮牌玩家
-            if revealed_ids:
-                compare_ids = [pid for pid in alive_ids if pid in revealed_ids]
-            else:
-                # 兜底: 没有亮牌数据 (例如 ended_by_fold 场景)，比较所有存活玩家
-                compare_ids = alive_ids
+            # 始终比较所有存活玩家 (revealed_players 仅用于前端展示)
+            compare_ids = alive_ids
 
             # 如果只有 1 个亮牌玩家，直接获胜
             if len(compare_ids) == 1:
@@ -870,9 +861,10 @@ class HandEngine:
             b.player_id for b in all_bets if b.action == "fold"
         }
 
-        # === Fold 退款：存活玩家的有效投入不超过 fold 者最大投入 ===
+        # === Fold 退款：所有玩家的有效投入不超过 fold 者最大投入 ===
         # 例: A(BB=100) fold, B all-in 10000
         #   → B 的有效投入 cap 在 100, 退回 9900
+        # 修复: fold 玩家超过 max_folded_bet 的部分也需退款，防止筹码消失
         effective_bets = dict(player_totals)
         if folded_ids:
             max_folded_bet = max(
@@ -880,9 +872,9 @@ class HandEngine:
                 default=0
             )
             for pid in list(effective_bets.keys()):
-                if pid not in folded_ids and effective_bets[pid] > max_folded_bet:
+                if effective_bets[pid] > max_folded_bet:
                     refund = effective_bets[pid] - max_folded_bet
-                    # 退回多余筹码
+                    # 退回多余筹码 (存活玩家和 fold 玩家均需 cap)
                     player = self.db.query(RoomPlayer).filter(
                         RoomPlayer.id == pid
                     ).first()

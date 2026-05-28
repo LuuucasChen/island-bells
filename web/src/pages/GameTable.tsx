@@ -447,7 +447,15 @@ function GameTable() {
               />
             ))}
           </div>
+
         </div>
+
+        {/* Fallback: owner can manually settle — 牌桌区域左下角 */}
+        {isOwner && hand?.status === 'settling' && (
+          <button className="table-settle-btn" onClick={handleSettle}>
+            🎉 手动结算
+          </button>
+        )}
       </div>
 
       {/* My hole cards (large, at bottom) — 左侧铃铛数量 */}
@@ -545,14 +553,7 @@ function GameTable() {
           <div className="app-empty">即将自动推进到下一阶段...</div>
         )}
 
-        {/* Fallback: owner can manually settle if auto-settle failed */}
-        {isOwner && hand?.status === 'settling' && showdownPhase === 'idle' && (
-          <div className="owner-controls">
-            <button className="owner-btn" onClick={handleSettle}>
-              🎉 手动结算
-            </button>
-          </div>
-        )}
+        {/* 手动结算按钮已移至牌桌区域左下角 */}
       </div>
 
       {/* Showdown Modal */}

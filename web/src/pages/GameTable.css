@@ -64,8 +64,9 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 8px 12px;
+  padding: 8px 12px 38px; /* 底部留出手动结算按钮空间 */
   overflow-y: auto;
+  position: relative;
 }
 
 .poker-table {
@@ -74,6 +75,7 @@
   display: flex;
   flex-direction: column;
   gap: 12px;
+  position: relative;
 }
 
 /* === Player Rows === */
@@ -260,77 +262,115 @@
 /* === Action Panel === */
 .action-panel {
   background: var(--app-bg-content, rgb(247, 243, 223));
-  border-top: 2px solid var(--app-border-light, #c4b89e);
-  padding: 10px 16px;
-  padding-bottom: calc(10px + env(safe-area-inset-bottom, 0px));
-  height: 150px;
+  border-top: 2.5px solid var(--app-border-light, #c4b89e);
+  padding: 14px 16px;
+  padding-bottom: calc(14px + env(safe-area-inset-bottom, 0px));
+  height: 172px;
   overflow: hidden;
 }
 
 .action-buttons {
   display: flex;
-  gap: 6px;
+  gap: 10px;
+  margin-top: 2px;
 }
 
+/* --- 快捷操作行 --- */
 .quick-amounts {
   display: flex;
-  gap: 6px;
-  margin-bottom: 6px;
+  gap: 8px;
+  margin-bottom: 8px;
   flex-wrap: wrap;
+  align-items: center;
 }
 
+/* 通用快捷按钮 — 游戏筹码感 */
 .quick-chip {
-  padding: 4px 10px;
+  padding: 9px 16px;
   border-radius: 50px;
   background: var(--app-bg, #f8f8f0);
-  border: 1.5px solid var(--app-border-light, #c4b89e);
-  font-size: 11px;
+  border: 2px solid var(--app-border-light, #c4b89e);
+  font-size: 13px;
   font-weight: 600;
   cursor: pointer;
   color: var(--app-text-body, #725d42);
   font-family: inherit;
-  transition: all 0.15s;
-  box-shadow: 0 2px 0 0 #d4c9b4;
+  letter-spacing: 0.02em;
+  line-height: 1;
+  box-shadow: 0 3px 0 0 #d4c9b4;
+  transition: all 0.15s cubic-bezier(0.4, 0, 0.2, 1);
 }
-
 .quick-chip:hover {
   transform: translateY(-1px);
-  box-shadow: 0 3px 0 0 #d4c9b4;
+  box-shadow: 0 4px 0 0 #d4c9b4;
+  border-color: #a89878;
 }
-
 .quick-chip:active {
-  transform: translateY(1px);
+  transform: translateY(2px);
   box-shadow: 0 1px 0 0 #d4c9b4;
 }
 
+/* 平call — 绿色主调，更突出 */
 .quick-chip-call {
-  background: rgba(111, 186, 44, 0.12);
-  border-color: var(--app-success, #6fba2c);
-  color: var(--app-success, #6fba2c);
+  background: #e6f9e0;
+  border-color: #6fba2c;
+  color: #4a8c1a;
+  box-shadow: 0 3px 0 0 #5a9e1e;
+  font-weight: 700;
+  padding: 9px 20px;
+}
+.quick-chip-call:hover {
+  background: #d4f0cc;
+  box-shadow: 0 4px 0 0 #5a9e1e;
+  transform: translateY(-1px);
+}
+.quick-chip-call:active {
+  transform: translateY(2px);
+  box-shadow: 0 1px 0 0 #5a9e1e;
 }
 
+/* raise 标签 — 推到右侧 */
+.quick-raise-label {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--app-text-secondary, #9f927d);
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  margin-left: auto;
+}
+
+/* --- 自定义加注 --- */
 .custom-raise {
   display: flex;
-  gap: 6px;
-  margin-bottom: 4px;
+  gap: 8px;
+  margin-bottom: 6px;
 }
 
 .custom-raise-input {
   flex: 1;
-  padding: 6px 12px;
+  padding: 10px 18px;
   border-radius: 50px;
-  border: 1.5px solid var(--app-border-light, #c4b89e);
-  background: var(--app-bg, #f8f8f0);
-  font-size: 12px;
-  font-weight: 600;
+  border: 2.5px solid var(--app-border-light, #c4b89e);
+  background: var(--app-bg-input, rgb(247, 243, 223));
+  font-size: 13px;
+  font-weight: 500;
   font-family: inherit;
   color: var(--app-text-body, #725d42);
   outline: none;
-  transition: border-color 0.2s;
+  box-shadow: 0 3px 0 0 #d4c9b4;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  letter-spacing: 0.01em;
 }
-
+.custom-raise-input::placeholder {
+  color: #c4b89e;
+  font-weight: 400;
+}
 .custom-raise-input:focus {
-  border-color: var(--app-primary, #19c8b9);
+  border-color: #ffcc00;
+  box-shadow: 0 3px 0 0 #e0b800, 0 0 0 3px rgba(255, 204, 0, 0.15);
+}
+.custom-raise-input:hover:not(:focus) {
+  border-color: #a89878;
 }
 
 .custom-raise-input::-webkit-inner-spin-button,
@@ -339,22 +379,31 @@
   margin: 0;
 }
 
+/* 追加按钮 — 描边风格 */
 .custom-raise-btn {
-  padding: 6px 14px;
+  padding: 10px 20px;
   border-radius: 50px;
-  background: var(--app-primary, #19c8b9);
-  border: none;
-  font-size: 11px;
+  background: var(--app-bg, #f8f8f0);
+  border: 2px solid var(--app-primary, #19c8b9);
+  font-size: 13px;
   font-weight: 700;
   font-family: inherit;
-  color: #fff;
+  color: #11a89b;
   cursor: pointer;
-  transition: all 0.2s;
-  box-shadow: 0 2px 0 0 #11a89b;
+  box-shadow: 0 3px 0 0 #11a89b;
+  letter-spacing: 0.02em;
+  line-height: 1;
+  transition: all 0.15s cubic-bezier(0.4, 0, 0.2, 1);
 }
-
-.custom-raise-btn:hover { background: var(--app-primary-hover, #3dd4c6); }
-.custom-raise-btn:active { transform: translateY(1px); box-shadow: 0 1px 0 0 #11a89b; }
+.custom-raise-btn:hover {
+  background: #e6f9f6;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 0 0 #11a89b;
+}
+.custom-raise-btn:active {
+  transform: translateY(2px);
+  box-shadow: 0 1px 0 0 #11a89b;
+}
 
 .custom-raise-error {
   font-size: 11px;
@@ -363,13 +412,28 @@
   margin-bottom: 4px;
 }
 
-.owner-controls {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin-top: 8px;
-  padding-top: 8px;
-  border-top: 1px solid var(--app-border-light, #c4b89e);
+/* 手动结算按钮 — 牌桌区域左下角 */
+.table-settle-btn {
+  position: absolute;
+  bottom: 8px;
+  left: 12px;
+  padding: 6px 18px;
+  border-radius: 50px;
+  background: var(--app-bg, #f8f4e8);
+  border: 1.5px solid var(--app-border-light, #c4b89e);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  color: var(--app-text, #3d3929);
+  transition: background 0.15s;
+  box-shadow: 0 2px 0 0 #d4c9b4;
+  z-index: 2;
+}
+.table-settle-btn:hover {
+  background: var(--app-primary-light, #e8dcc0);
+}
+.table-settle-btn:active {
+  transform: scale(0.96);
 }
 
 .owner-btn {
@@ -383,6 +447,7 @@
   font-weight: 600;
   text-align: center;
   cursor: pointer;
+  display: none; /* 已移至 .table-settle-btn */
   color: var(--app-text-body, #725d42);
   font-family: inherit;
   transition: all 0.15s;
@@ -620,52 +685,74 @@
 }
 
 /* === Check chip (green) === */
+/* check — 薄荷青绿主调 */
 .quick-chip-check {
-  background: rgba(25, 200, 185, 0.12);
-  border-color: var(--app-primary, #19c8b9);
-  color: var(--app-primary, #19c8b9);
+  background: #e6f9f6;
+  border-color: #19c8b9;
+  color: #11a89b;
+  box-shadow: 0 3px 0 0 #11a89b;
+  font-weight: 700;
+  padding: 9px 20px;
+}
+.quick-chip-check:hover {
+  background: #d0f2ed;
+  box-shadow: 0 4px 0 0 #11a89b;
+  transform: translateY(-1px);
+}
+.quick-chip-check:active {
+  transform: translateY(2px);
+  box-shadow: 0 1px 0 0 #11a89b;
 }
 
 /* === Action Buttons (fold + all in) === */
 .action-btn {
   flex: 1;
-  padding: 10px 16px;
+  padding: 13px 18px;
   border-radius: 50px;
-  font-size: 14px;
+  font-size: 15px;
   font-weight: 700;
-  border: none;
+  border: 2px solid transparent;
   cursor: pointer;
   font-family: inherit;
-  transition: all 0.15s;
+  letter-spacing: 0.03em;
   text-transform: lowercase;
+  line-height: 1;
+  transition: all 0.15s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
+/* fold — 暖灰大地色（禁止蓝色!） */
 .action-btn-fold {
-  background: #889df0;
-  color: #fff;
-  box-shadow: 0 3px 0 0 #6272c0;
+  background: var(--app-bg, #f8f8f0);
+  color: #8a7b66;
+  border-color: #c4b89e;
+  box-shadow: 0 4px 0 0 #bdaea0;
 }
 .action-btn-fold:hover {
-  background: #9db0f5;
+  background: #f0ece2;
+  color: #725d42;
+  border-color: #a89878;
   transform: translateY(-1px);
-  box-shadow: 0 4px 0 0 #6272c0;
+  box-shadow: 0 5px 0 0 #bdaea0;
 }
 .action-btn-fold:active {
   transform: translateY(2px);
-  box-shadow: 0 1px 0 0 #6272c0;
+  box-shadow: 0 1px 0 0 #bdaea0;
 }
 
+/* all in — 戏剧性暖红 + 游戏按键感 */
 .action-btn-allin {
-  background: #e05a5a;
+  background: #fc736d;
   color: #fff;
-  box-shadow: 0 3px 0 0 #b83a3a;
+  border-color: #fc736d;
+  box-shadow: 0 4px 0 0 #c94444;
+  text-shadow: 0 1px 1px rgba(0, 0, 0, 0.12);
 }
 .action-btn-allin:hover {
-  background: #e87070;
+  background: #fd8a85;
   transform: translateY(-1px);
-  box-shadow: 0 4px 0 0 #b83a3a;
+  box-shadow: 0 5px 0 0 #c94444;
 }
 .action-btn-allin:active {
   transform: translateY(2px);
-  box-shadow: 0 1px 0 0 #b83a3a;
+  box-shadow: 0 1px 0 0 #c94444;
 }

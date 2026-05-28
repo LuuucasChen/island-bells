@@ -11,7 +11,7 @@ interface AuthState {
   token: string | null
   user: User | null
   loading: boolean
-  demoLogin: (nickname: string) => Promise<void>
+  demoLogin: (nickname?: string) => Promise<void>
   fetchUserInfo: () => Promise<void>
   logout: () => void
 }
@@ -25,13 +25,13 @@ export const useAuthStore = create<AuthState>()(
       user: null,
       loading: false,
 
-      demoLogin: async (nickname: string) => {
+      demoLogin: async (nickname?: string) => {
         set({ loading: true })
         try {
           const res = await fetch(`${API_BASE}/auth/demo`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ nickname }),
+            body: JSON.stringify({ nickname: nickname || '' }),
           })
           const data = await res.json()
           set({ token: data.token, user: data.user, loading: false })

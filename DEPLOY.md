@@ -129,7 +129,7 @@ nano /opt/island_bells/backend/.env
 # 数据库（默认 MySQL，这里改为 SQLite）
 DATABASE_URL=sqlite:///./data/island_bells.db
 
-# JWT 密钥（⚠️ 务必修改为随机字符串）
+# JWT 密钥
 JWT_SECRET=your-random-secret-string-here
 
 # JWT 过期时间（小时）

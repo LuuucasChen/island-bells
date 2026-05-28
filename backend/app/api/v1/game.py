@@ -412,6 +412,15 @@ async def settle_hand_shortcut(room_id: int, db: Session = Depends(get_db), curr
         .first()
     )
     if settling_hand is None:
+        # 幂等: 如果已结算，返回成功而非报错
+        settled_hand = (
+            db.query(Hand)
+            .filter(Hand.room_id == room_id, Hand.status == "settled")
+            .order_by(Hand.hand_number.desc())
+            .first()
+        )
+        if settled_hand:
+            return {"hand_id": settled_hand.id, "status": "already_settled", "results": []}
         raise BadRequestException("当前没有待结算的季节")
 
     # 自动评估牌力确定赢家
