@@ -3,7 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom'
 import { Layout } from '@/components/Layout'
 import { Button, Card } from 'animal-island-ui'
 import { CONCEPT_TERMS, ROOM_STATUS_TERMS, formatBells } from '@/utils/terms'
-import { SEAT_NUMBERS } from '@/utils/constants'
+import { SEAT_NUMBERS, getCharacterAvatar } from '@/utils/constants'
 import { useGameStore } from '@/stores/gameStore'
 import { useAuthStore } from '@/stores/authStore'
 import { useApi } from '@/hooks/useApi'
@@ -29,6 +29,7 @@ function IslandLobby() {
   const [joined, setJoined] = useState(false)
   const [error, setError] = useState(false)
   const [showCopyToast, setShowCopyToast] = useState(false)
+  const [errorToast, setErrorToast] = useState('')
 
   // WS 连接（roomId 为 0 时不会建立连接，loadRoom 后会更新）
   useWebSocket(game.roomId || null)
@@ -153,7 +154,9 @@ function IslandLobby() {
       await game.startGame(game.roomId)
       navigate(`/game/${game.roomId}`)
     } catch (e) {
-      alert('开始失败: ' + (e as Error).message)
+      const msg = (e as Error).message || '操作失败'
+      setErrorToast(msg)
+      setTimeout(() => setErrorToast(''), 3000)
     }
   }
 
@@ -201,9 +204,6 @@ function IslandLobby() {
     <Layout
       title={roomName}
       back
-      right={isOwner ? (
-        <button className="lobby-start-btn" onClick={handleStart}>开始游戏</button>
-      ) : undefined}
     >
       {/* 岛屿信息卡 — 包含渡渡鸟码 */}
       <Card color="app-teal" style={{ marginBottom: 20 }}>
@@ -233,6 +233,11 @@ function IslandLobby() {
         <div className="lobby-copy-toast">✅ 已复制渡渡鸟码</div>
       )}
 
+      {/* 错误 toast */}
+      {errorToast && (
+        <div className="lobby-error-toast">❌ {errorToast}</div>
+      )}
+
       {/* 座位区 */}
       <div className="lobby-section-title">🪑 岛屿座位</div>
       <div className="seats-grid">
@@ -248,6 +253,9 @@ function IslandLobby() {
             >
               {isOccupied ? (
                 <>
+                  {getCharacterAvatar(seat.nickname!) && (
+                    <img className="seat-avatar" src={getCharacterAvatar(seat.nickname!)!} alt="" />
+                  )}
                   <div className="seat-nickname">{seat.nickname}</div>
                   <div className="seat-bells">🔔 {formatBells(seat.chip_count!)}</div>
                 </>
@@ -265,6 +273,22 @@ function IslandLobby() {
           等待岛主开始游戏...
         </div>
       )}
+
+      {/* 岛主开始游戏按钮 */}
+      {isOwner && (
+        <button className="lobby-start-btn" onClick={handleStart}>
+          <span className="lobby-start-icon">🏝️</span>
+          <span>开始游戏</span>
+        </button>
+      )}
+
+      {/* 海洋装饰背景 */}
+      <div className="lobby-ocean">
+        <img className="lobby-fish lobby-fish-1" src="/elements/Shark.png" alt="" />
+        <img className="lobby-fish lobby-fish-2" src="/elements/Koi.png" alt="" />
+        <img className="lobby-fish lobby-fish-3" src="/elements/Betta.png" alt="" />
+        <img className="lobby-fish lobby-fish-4" src="/elements/Blowfish.png" alt="" />
+      </div>
     </Layout>
   )
 }

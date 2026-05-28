@@ -16,6 +16,20 @@
   display: flex;
   flex-direction: column;
   gap: 6px;
+  position: relative;
+  overflow: hidden;
+}
+
+/* 叶纹水印 */
+.create-card-watermark {
+  position: absolute;
+  bottom: -10px;
+  right: -10px;
+  width: 120px;
+  height: 120px;
+  background: url('/elements/Leaf_Icon.png') center/contain no-repeat;
+  opacity: 0.06;
+  pointer-events: none;
 }
 
 /* Divider inside card */
@@ -39,6 +53,17 @@
   font-weight: 800;
   color: #5a3e1b;
   letter-spacing: 0.03em;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* 内联小图标 */
+.create-inline-icon {
+  width: 20px;
+  height: 20px;
+  object-fit: contain;
+  flex-shrink: 0;
 }
 
 /* Underline input */
@@ -102,6 +127,22 @@
 
 .create-raw-input:focus + .create-underline {
   background: #19c8b9;
+}
+
+/* 昵称头像预览 */
+.create-nickname-avatar {
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  object-fit: cover;
+  flex-shrink: 0;
+  border: 1.5px solid #c4b89e;
+  animation: avatarPopIn 0.25s ease;
+}
+
+@keyframes avatarPopIn {
+  from { transform: scale(0.6); opacity: 0; }
+  to { transform: scale(1); opacity: 1; }
 }
 
 /* Row with dice */
@@ -248,6 +289,14 @@
 
 .create-go-btn-icon {
   font-size: 20px;
+  display: inline-flex;
+}
+
+.create-btn-img {
+  width: 24px;
+  height: 24px;
+  object-fit: contain;
+  filter: brightness(0) invert(1);
 }
 
 .create-go-btn-loading {

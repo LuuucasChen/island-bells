@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Layout } from '@/components/Layout'
 import { CONCEPT_TERMS } from '@/utils/terms'
-import { CHIP_PRESETS, BLIND_PRESETS, getRandomCharacterName, getRandomIslandName } from '@/utils/constants'
+import { CHIP_PRESETS, BLIND_PRESETS, getRandomCharacterName, getRandomIslandName, getCharacterAvatar } from '@/utils/constants'
 import { useApi } from '@/hooks/useApi'
 import './CreateIsland.css'
 
@@ -41,6 +41,7 @@ function CreateIsland() {
       <div className="create-page">
         {/* 表单卡片 */}
         <div className="create-form-card">
+          <div className="create-card-watermark" />
           {/* 岛屿名称 */}
           <div className="create-field">
             <label className="create-field-label">岛屿名称</label>
@@ -66,6 +67,9 @@ function CreateIsland() {
           <div className="create-field">
             <label className="create-field-label">你的昵称</label>
             <div className="create-underline-row">
+              {getCharacterAvatar(nickname) && (
+                <img className="create-nickname-avatar" src={getCharacterAvatar(nickname)!} alt="" />
+              )}
               <div className="create-underline-input create-underline-input--flex">
                 <input
                   className="create-raw-input"
@@ -85,7 +89,10 @@ function CreateIsland() {
 
           {/* 铃钱初始数量 */}
           <div className="create-field">
-            <label className="create-field-label">{CONCEPT_TERMS.chips}初始数量</label>
+            <label className="create-field-label">
+              <img className="create-inline-icon" src="/elements/Bells_Icon.png" alt="" />
+              {CONCEPT_TERMS.chips}初始数量
+            </label>
             <div className="create-preset-grid">
               {CHIP_PRESETS.map((p) => (
                 <button
@@ -117,7 +124,10 @@ function CreateIsland() {
 
           {/* 树苗费 / 大树费 */}
           <div className="create-field">
-            <label className="create-field-label">{CONCEPT_TERMS.smallBlind} / {CONCEPT_TERMS.bigBlind}</label>
+            <label className="create-field-label">
+              <img className="create-inline-icon" src="/elements/Sapling.png" alt="" />
+              {CONCEPT_TERMS.smallBlind} / {CONCEPT_TERMS.bigBlind}
+            </label>
             <div className="create-preset-grid">
               {BLIND_PRESETS.map((p) => (
                 <button
@@ -170,7 +180,9 @@ function CreateIsland() {
           onClick={handleCreate}
           disabled={loading}
         >
-          <span className="create-go-btn-icon">🏝️</span>
+          <span className="create-go-btn-icon">
+              <img className="create-btn-img" src="/elements/Tent.png" alt="" />
+            </span>
           <span>{loading ? '正在创建...' : '确认创建岛屿'}</span>
         </button>
       </div>

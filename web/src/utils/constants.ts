@@ -28,16 +28,47 @@ export const MAX_PLAYERS = 9
 /** 座位号范围 */
 export const SEAT_NUMBERS = Array.from({ length: MAX_PLAYERS }, (_, i) => i)
 
-/** 动森角色名池（用于随机昵称） */
+/** 动森角色名池（仅保留有头像图片的角色） */
 export const CHARACTER_NAMES = [
-  '狸克', '西施惠', 'K.K.', '豆狸', '粒狸',
-  '傅达', '傅珂', '绢儿', '麻儿', '棉儿',
-  '吕游', '龙克斯', '鱼加', '裁缝姐姐', '狸猫',
-  '小润', '美玲', '杰克', '小动', '彭花',
-  '阿波罗', '阿一', '阿四', '星薇', '卜白',
-  '恰姆', '罗宾', '樱桃', '佩利', '蒙奇',
-  '草莓', '可可', '德式', '小酒窝', '彩虹',
+  '狸克', '豆狸', '粒狸', '西施惠', '傅达',
+  '麻儿', '娟儿', '莫里', '陆德里', '曹卖',
+  'KK', '俞司廷', '龙克斯', '幽幽', '骆岚',
+  '然然', '薛革', '狐利', '吕游', '傅珂',
+  '巴猎', '里赛特先生', '杰克',
 ]
+
+/** 角色昵称 → 头像文件名映射 */
+export const CHARACTER_AVATAR_MAP: Record<string, string> = {
+  '狸克': 'Tom_Nook_狸克.png',
+  '豆狸': 'Nookling_豆狸粒狸.png',
+  '粒狸': 'Nookling_豆狸粒狸.png',
+  '西施惠': 'Isabelle_西施惠.png',
+  '傅达': 'Blathers_傅达.png',
+  '麻儿': 'Sable_麻儿.png',
+  '娟儿': 'Mabel_娟儿.png',
+  '莫里': 'Orville_莫里.png',
+  '陆德里': 'Wilbur_陆德里.png',
+  '曹卖': 'Daisy_Mae_曹卖.png',
+  'KK': 'KK_Slider.png',
+  '俞司廷': 'CJ_俞司廷.png',
+  '龙克斯': 'Flick_龙克斯.png',
+  '幽幽': 'Wisp_幽幽.png',
+  '骆岚': 'Saharah_骆岚.png',
+  '然然': 'Leif_然然.png',
+  '薛革': 'Kicks_薛革.png',
+  '狐利': 'Redd_狐利.png',
+  '吕游': 'Gulliver_吕游.png',
+  '傅珂': 'Celeste_傅珂.png',
+  '巴猎': 'Harvey_巴猎.png',
+  '里赛特先生': 'Resetti_里赛特先生.png',
+  '杰克': 'Jack.png',
+}
+
+/** 获取角色头像 URL，无匹配返回 null */
+export function getCharacterAvatar(name: string): string | null {
+  const file = CHARACTER_AVATAR_MAP[name]
+  return file ? `/characters/${file}` : null
+}
 
 /** 岛屿名池（用于随机房间名） */
 export const ISLAND_NAMES = [

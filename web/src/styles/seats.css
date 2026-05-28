@@ -23,6 +23,12 @@
   background: var(--app-bg-content);
   transition: all var(--app-duration) var(--app-ease);
   cursor: pointer;
+  min-height: 96px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
 }
 
 .seat-empty {

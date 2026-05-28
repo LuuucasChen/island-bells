@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Layout } from '@/components/Layout'
-import { getRandomCharacterName } from '@/utils/constants'
+import { getRandomCharacterName, getCharacterAvatar } from '@/utils/constants'
 import { useApi } from '@/hooks/useApi'
 import './JoinIsland.css'
 
@@ -36,12 +36,13 @@ function JoinIsland() {
       <div className="join-page">
         {/* 顶部引导 */}
         <div className="join-hero-mini">
-          <span className="join-hero-emoji">🐦</span>
+          <img className="join-hero-img" src="/elements/Balloon.png" alt="" />
           <span className="join-hero-text">渡渡鸟航空</span>
         </div>
 
         {/* 居中表单卡片 */}
         <div className="join-form-card">
+          <div className="join-card-watermark" />
           <div className="join-field">
             <label className="join-field-label">渡渡鸟码</label>
             <div className="join-underline-input">
@@ -62,6 +63,9 @@ function JoinIsland() {
           <div className="join-field">
             <label className="join-field-label">你的昵称</label>
             <div className="join-underline-row">
+              {getCharacterAvatar(nickname) && (
+                <img className="join-nickname-avatar" src={getCharacterAvatar(nickname)!} alt="" />
+              )}
               <div className="join-underline-input join-underline-input--flex">
                 <input
                   className="join-raw-input"
@@ -84,7 +88,9 @@ function JoinIsland() {
           onClick={handleJoin}
           disabled={loading}
         >
-          <span className="join-go-btn-icon">✈️</span>
+          <span className="join-go-btn-icon">
+            <img className="join-btn-img" src="/elements/Nook_Miles_Ticket.png" alt="" />
+          </span>
           <span>{loading ? '正在飞往...' : '出发！'}</span>
         </button>
       </div>

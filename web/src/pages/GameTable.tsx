@@ -5,6 +5,7 @@ import {
   CONCEPT_TERMS, ROLE_TERMS, formatBells, formatBellsWithIcon,
   getRoundText, getRoundIcon,
 } from '@/utils/terms'
+import { getCharacterAvatar } from '@/utils/constants'
 import { useGameStore } from '@/stores/gameStore'
 import { useWebSocket } from '@/hooks/useWebSocket'
 import { useApi } from '@/hooks/useApi'
@@ -68,6 +69,37 @@ function GameTable() {
   // 找到当前需要操作的玩家（基于后端 turn_player_id）
   const myPlayer = players.find((p) => p.user_id === myUserId)
   const isMyTurn = myPlayer && turnPlayerId === myPlayer.player_id && hand?.status === 'betting'
+  const isMyAllin = myPlayer ? (myPlayer.chip_count === 0 && !myPlayer.is_folded) : false
+
+  // === 互动状态: 连胜/赢钱动画 ===
+  const [winStreak, setWinStreak] = useState(0)
+  const [showBellRain, setShowBellRain] = useState(false)
+  const prevHandIdRef = useRef<number | null>(null)
+
+  // 检测结算结果: 我是否赢了
+  useEffect(() => {
+    if (!game.settleResults || !myPlayer) return
+    const currentHandId = hand?.hand_id
+    if (currentHandId && currentHandId === prevHandIdRef.current) return
+    if (currentHandId) prevHandIdRef.current = currentHandId
+
+    const myResults = game.settleResults.filter((r) => r.winner_id === myPlayer.player_id)
+    const totalWon = myResults.reduce((sum, r) => sum + r.amount_won, 0)
+    if (totalWon > 0) {
+      setWinStreak((prev) => prev + 1)
+      setShowBellRain(true)
+      setTimeout(() => setShowBellRain(false), 3000)
+    } else {
+      setWinStreak(0)
+    }
+  }, [game.settleResults])
+
+  // 新一手牌时重置赢钱动画（但不重置连胜和累计盈利）
+  useEffect(() => {
+    if (hand?.status === 'betting' && hand?.current_round === 'preflop') {
+      setShowBellRain(false)
+    }
+  }, [hand?.hand_id])
 
   // === Showdown orchestration ===
   // When store signals showdownReveal, start the reveal phase
@@ -364,11 +396,27 @@ function GameTable() {
     return bestId
   })()
 
-  // === 动态座位布局 ===
-  const sortedPlayers = [...players].sort((a, b) => a.seat_number - b.seat_number)
-  const halfCount = Math.ceil(sortedPlayers.length / 2)
-  const topPlayers = sortedPlayers.slice(0, halfCount)
-  const bottomPlayers = sortedPlayers.slice(halfCount)
+  // === 环形座位布局（我固定底部，其他人顺时针环绕） ===
+  // 德州扑克顺时针: 我 → 左侧 → 上侧 → 右侧 → 我
+  const mySeatNum = myPlayer?.seat_number ?? -1
+  const othersClockwise = [...players]
+    .filter((p) => p.user_id !== myUserId)
+    .sort((a, b) => {
+      const da = (a.seat_number - mySeatNum + 9) % 9 || 9
+      const db = (b.seat_number - mySeatNum + 9) % 9 || 9
+      return da - db
+    })
+  const n = othersClockwise.length
+  // 4+人(n>=3)时左右各1人，7+人(n>=6)时左右各2人，剩余去顶部
+  const leftCount = n < 3 ? 0 : n < 6 ? 1 : 2
+  const rightCount = n < 3 ? 0 : n < 6 ? 1 : 2
+  const topCount = Math.max(0, n - leftCount - rightCount)
+  const leftPlayers = othersClockwise.slice(0, leftCount)
+  const topPlayers = othersClockwise.slice(leftCount, leftCount + topCount)
+  const rightPlayers = othersClockwise.slice(leftCount + topCount)
+
+  // === 响应式缩放: 顶部玩家 >= 5 人时等比缩小座位框和牌桌 ===
+  const tableScale = topCount >= 5 ? Math.max(0.72, 4.2 / topCount) : 1
 
   // 是否显示 showdown 弹窗 (仅在翻牌动画+结算完成后)
   const showShowdownModal = showdownPhase === 'settled' && (hand?.status === 'settled')
@@ -397,56 +445,131 @@ function GameTable() {
 
       {/* Table Area */}
       <div className="table-area">
-        <div className="poker-table">
-          {/* Top row players */}
-          <div className="players-row players-top">
-            {topPlayers.map((player) => (
-              <PlayerSeat
-                key={player.player_id}
-                player={player}
-                isMe={player.user_id === myUserId}
-                isTurn={turnPlayerId === player.player_id}
-                isShowdown={showShowdownModal}
-                myUserId={myUserId}
-                players={players}
-                evaluations={evaluations}
-                inlineCards={showInlineCards ? (allHoleCards[String(player.player_id)] || null) : null}
-                isBestHand={showInlineCards && player.player_id === bestHandPlayerId}
-              />
-            ))}
-          </div>
+        {/* 我的大头像框 */}
+        {myPlayer && (() => {
+          const avatarUrl = getCharacterAvatar(myPlayer.nickname)
+          let frameClass = 'my-avatar-frame'
+          if (isMyAllin) frameClass += ' my-avatar-allin'
+          else if (isMyTurn) frameClass += ' my-avatar-turn'
+          return (
+            <div className={frameClass}>
+              <div className="my-avatar-img-wrap">
+                {avatarUrl ? (
+                  <img className="my-avatar-img" src={avatarUrl} alt={myPlayer.nickname} />
+                ) : (
+                  <div className="my-avatar-placeholder">{myPlayer.nickname.charAt(0)}</div>
+                )}
+                {/* 战绩角标 */}
+                {winStreak >= 2 && (
+                  <span className="my-avatar-streak">🔥{winStreak}</span>
+                )}
+              </div>
+              <div className="my-avatar-info">
+                <div className="my-avatar-name">{myPlayer.nickname}</div>
+              </div>
+              {/* 铃钱雨动画 */}
+              {showBellRain && (
+                <div className="bell-rain">
+                  {Array.from({ length: 8 }).map((_, i) => (
+                    <span key={i} className="bell-rain-drop" style={{ animationDelay: `${i * 0.15}s`, left: `${10 + i * 11}%` }}>🔔</span>
+                  ))}
+                </div>
+              )}
+            </div>
+          )
+        })()}
+        <div className="poker-table" style={{ '--table-scale': tableScale } as React.CSSProperties}>
+          {/* 左侧玩家 */}
+          {leftPlayers.length > 0 && (
+            <div className="side-players side-left">
+              {leftPlayers.map((player) => (
+                <PlayerSeat
+                  key={player.player_id}
+                  player={player}
+                  isMe={false}
+                  isTurn={turnPlayerId === player.player_id}
+                  isShowdown={showShowdownModal}
+                  myUserId={myUserId}
+                  players={players}
+                  evaluations={evaluations}
+                  inlineCards={showInlineCards ? (allHoleCards[String(player.player_id)] || null) : null}
+                  isBestHand={showInlineCards && player.player_id === bestHandPlayerId}
+                />
+              ))}
+            </div>
+          )}
 
-          {/* Center: Community cards + Pot */}
-          <div className="table-center">
-            <CommunityCards
-              cards={communityCards}
-              currentRound={currentRound}
-              revealing={showdownPhase === 'revealing'}
-              onRevealComplete={handleRevealComplete}
-            />
-            <div className="center-pot">
-              <span className="center-pot-label">底池</span>
-              <span className="center-pot-amount">{formatBells(potTotal)}</span>
+          {/* 中央区域: 上排 + 公共牌 + 下排(对手) */}
+          <div className="table-main">
+            {/* 上排玩家 */}
+            <div className="players-row players-top">
+              {topPlayers.map((player) => (
+                <PlayerSeat
+                  key={player.player_id}
+                  player={player}
+                  isMe={false}
+                  isTurn={turnPlayerId === player.player_id}
+                  isShowdown={showShowdownModal}
+                  myUserId={myUserId}
+                  players={players}
+                  evaluations={evaluations}
+                  inlineCards={showInlineCards ? (allHoleCards[String(player.player_id)] || null) : null}
+                  isBestHand={showInlineCards && player.player_id === bestHandPlayerId}
+                />
+              ))}
+            </div>
+
+            {/* Center: Community cards + Pot */}
+            <div className="table-center">
+              <CommunityCards
+                cards={communityCards}
+                currentRound={currentRound}
+                revealing={showdownPhase === 'revealing'}
+                onRevealComplete={handleRevealComplete}
+              />
+              <div className="center-pot">
+                <span className="center-pot-label">底池</span>
+                <span className="center-pot-amount">{formatBells(potTotal)}</span>
+              </div>
             </div>
           </div>
 
-          {/* Bottom row players */}
-          <div className="players-row players-bottom">
-            {bottomPlayers.map((player) => (
+          {/* 右侧玩家 */}
+          {rightPlayers.length > 0 && (
+            <div className="side-players side-right">
+              {rightPlayers.map((player) => (
+                <PlayerSeat
+                  key={player.player_id}
+                  player={player}
+                  isMe={false}
+                  isTurn={turnPlayerId === player.player_id}
+                  isShowdown={showShowdownModal}
+                  myUserId={myUserId}
+                  players={players}
+                  evaluations={evaluations}
+                  inlineCards={showInlineCards ? (allHoleCards[String(player.player_id)] || null) : null}
+                  isBestHand={showInlineCards && player.player_id === bestHandPlayerId}
+                />
+              ))}
+            </div>
+          )}
+
+          {/* 我的座位 — 牌桌底部居中 */}
+          {myPlayer && (
+            <div className="players-row players-mine">
               <PlayerSeat
-                key={player.player_id}
-                player={player}
-                isMe={player.user_id === myUserId}
-                isTurn={turnPlayerId === player.player_id}
+                player={myPlayer}
+                isMe={true}
+                isTurn={turnPlayerId === myPlayer.player_id}
                 isShowdown={showShowdownModal}
                 myUserId={myUserId}
                 players={players}
                 evaluations={evaluations}
-                inlineCards={showInlineCards ? (allHoleCards[String(player.player_id)] || null) : null}
-                isBestHand={showInlineCards && player.player_id === bestHandPlayerId}
+                inlineCards={showInlineCards ? (allHoleCards[String(myPlayer.player_id)] || null) : null}
+                isBestHand={showInlineCards && myPlayer.player_id === bestHandPlayerId}
               />
-            ))}
-          </div>
+            </div>
+          )}
 
         </div>
 
@@ -505,7 +628,7 @@ function GameTable() {
             <div className="quick-amounts">
               {toCall > 0 ? (
                 <button className="quick-chip quick-chip-call" onClick={() => handleAction('call')}>
-                  平call +{formatBells(toCall)}
+                  call {formatBells(toCall)}
                 </button>
               ) : (
                 <button className="quick-chip quick-chip-check" onClick={() => handleAction('check')}>
@@ -515,7 +638,7 @@ function GameTable() {
               <span className="quick-raise-label">raise:</span>
               {quickAmounts.map((amt) => (
                 <button key={amt} className="quick-chip" onClick={() => handleAction('raise', amt)}>
-                  +{formatBells(amt)}
+                  {formatBells(amt)}
                 </button>
               ))}
             </div>
@@ -644,6 +767,8 @@ function PlayerSeat({ player, isMe, isTurn, isShowdown, myUserId, players, evalu
 
   const eval_ = evaluations[String(player.player_id)]
 
+  const seatAvatarUrl = getCharacterAvatar(player.nickname)
+
   return (
     <div className={seatClass}>
       {player.role && (
@@ -653,6 +778,9 @@ function PlayerSeat({ player, isMe, isTurn, isShowdown, myUserId, players, evalu
         }}>
           {ROLE_TERMS[player.role] || player.role}
         </span>
+      )}
+      {seatAvatarUrl && (
+        <img className="seat-avatar" src={seatAvatarUrl} alt={player.nickname} />
       )}
       <div className="seat-nickname">{player.nickname}</div>
       <div className="seat-bells">🔔 {formatBells(player.chip_count)}</div>

@@ -4,6 +4,31 @@
   display: flex;
   flex-direction: column;
   background: var(--app-bg);
+  position: relative;
+}
+
+/* 叶子纹理装饰层（5片散落，不密集） */
+.layout::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background-image:
+    url('/elements/Leaf_Icon.png'),
+    url('/elements/Leaf_Icon.png'),
+    url('/elements/Leaf_Icon.png'),
+    url('/elements/Leaf_Icon.png'),
+    url('/elements/Leaf_Icon.png');
+  background-size: 48px, 40px, 56px, 36px, 44px;
+  background-position: 8% 15%, 85% 25%, 15% 70%, 78% 80%, 50% 45%;
+  background-repeat: no-repeat;
+  opacity: 0.06;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.layout > * {
+  position: relative;
+  z-index: 1;
 }
 
 .layout-body {

@@ -1,25 +1,39 @@
-/* === 开始游戏按钮 (NookPhone 立体风) === */
+/* === 开始游戏按钮 (大按钮居中) === */
 .lobby-start-btn {
-  padding: 5px 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  width: 60%;
+  margin: 20px auto 0;
+  padding: 16px 24px;
   border-radius: 50px;
   background: #19c8b9;
   border: none;
-  font-size: 12px;
+  font-size: 18px;
   font-weight: 700;
   color: #fff;
   cursor: pointer;
   font-family: inherit;
-  box-shadow: 0 3px 0 0 #11a89b;
-  transition: all 0.15s;
+  letter-spacing: 0.03em;
+  box-shadow: 0 5px 0 0 #11a89b, 0 8px 20px rgba(25, 200, 185, 0.3);
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.15);
+  position: relative;
+  z-index: 3;
 }
 .lobby-start-btn:hover {
   background: #3dd4c6;
-  transform: translateY(-1px);
-  box-shadow: 0 4px 0 0 #11a89b;
+  transform: translateY(-2px);
+  box-shadow: 0 7px 0 0 #11a89b, 0 12px 28px rgba(25, 200, 185, 0.35);
 }
 .lobby-start-btn:active {
-  transform: translateY(2px);
+  transform: translateY(3px);
   box-shadow: 0 1px 0 0 #11a89b;
+}
+
+.lobby-start-icon {
+  font-size: 22px;
 }
 
 /* === 岛屿信息卡 === */
@@ -31,7 +45,7 @@
 }
 
 .lobby-island-icon {
-  font-size: 36px;
+  font-size: 40px;
   line-height: 1;
 }
 
@@ -62,21 +76,21 @@
 .lobby-code-row {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   border-top: 1px solid rgba(45, 92, 74, 0.15);
   padding-top: 12px;
   margin-top: 4px;
 }
 
 .lobby-code-label {
-  font-size: 12px;
+  font-size: 14px;
   color: #3d6e5a;
   white-space: nowrap;
 }
 
 .lobby-code-value {
   font-family: 'SF Mono', 'Menlo', 'Consolas', monospace;
-  font-size: 15px;
+  font-size: 18px;
   font-weight: 800;
   color: #1a6b55;
   letter-spacing: 2px;
@@ -84,12 +98,12 @@
 
 .lobby-copy-btn {
   margin-left: auto;
-  width: 32px;
-  height: 32px;
-  border-radius: 8px;
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
   border: none;
   background: rgba(25, 200, 185, 0.12);
-  font-size: 15px;
+  font-size: 18px;
   cursor: pointer;
   display: flex;
   align-items: center;
@@ -120,20 +134,122 @@
   animation: lobbyToastIn 0.3s ease;
 }
 
+/* === 错误 toast === */
+.lobby-error-toast {
+  position: fixed;
+  top: 80px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 10px 24px;
+  background: #fff0f0;
+  border: 2px solid #e88;
+  border-radius: 50px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #c33;
+  box-shadow: 0 4px 16px rgba(200, 50, 50, 0.2);
+  z-index: 100;
+  animation: lobbyErrorToastIn 0.3s ease;
+}
+
 @keyframes lobbyToastIn {
   from { opacity: 0; transform: translateY(-8px); }
   to { opacity: 1; transform: translateY(0); }
 }
 
+@keyframes lobbyErrorToastIn {
+  from { opacity: 0; transform: translateX(-50%) translateY(-8px); }
+  to { opacity: 1; transform: translateX(-50%) translateY(0); }
+}
+
 /* === 座位区 === */
 .lobby-section-title {
-  font-size: 14px;
-  font-weight: 600;
+  font-size: 16px;
+  font-weight: 700;
   color: var(--app-text-primary);
-  margin-bottom: 10px;
+  margin-bottom: 12px;
 }
 
 .seat-loading {
   font-size: 12px;
   color: var(--app-primary);
+}
+
+/* === 海洋装饰背景 === */
+.lobby-ocean {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 33vh;
+  pointer-events: none;
+  z-index: 2;
+  overflow: hidden;
+  background: linear-gradient(
+    180deg,
+    rgba(248, 248, 240, 0) 0%,
+    rgba(248, 248, 240, 0.7) 15%,
+    rgba(220, 240, 248, 0.85) 40%,
+    rgba(180, 225, 245, 0.92) 70%,
+    rgba(160, 215, 240, 0.96) 100%
+  );
+}
+
+/* 波浪纹理 */
+.lobby-ocean::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 30px;
+  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1200 30'%3E%3Cpath d='M0,15 Q150,0 300,15 Q450,30 600,15 Q750,0 900,15 Q1050,30 1200,15 L1200,30 L0,30 Z' fill='rgba(25,200,185,0.06)'/%3E%3C/svg%3E") repeat-x;
+  background-size: 600px 30px;
+}
+
+/* 鱼类装饰 */
+.lobby-fish {
+  position: absolute;
+  object-fit: contain;
+  opacity: 0.15;
+  filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.08));
+}
+
+.lobby-fish-1 {
+  width: 80px;
+  bottom: 15%;
+  left: 5%;
+}
+
+.lobby-fish-2 {
+  width: 60px;
+  bottom: 35%;
+  right: 8%;
+  transform: scaleX(-1);
+}
+
+.lobby-fish-3 {
+  width: 50px;
+  bottom: 8%;
+  left: 40%;
+}
+
+.lobby-fish-4 {
+  width: 55px;
+  bottom: 25%;
+  right: 30%;
+  transform: scaleX(-1);
+}
+
+/* 确保主内容在海洋层上方 */
+.lobby-start-btn,
+.lobby-island-header,
+.lobby-code-row,
+.lobby-copy-toast,
+.lobby-section-title,
+.seats-grid,
+.seat-card,
+.app-empty {
+  position: relative;
+  z-index: 3;
 }

@@ -16,9 +16,19 @@ function HomePage() {
       <div className="home-container">
         {/* Hero 区 */}
         <div className="home-hero">
-          <div className="home-bell-icon">🔔</div>
+          <div className="home-bell-icon">
+            <img src="/elements/Bells_Icon.png" alt="铃钱" className="home-bell-img" />
+          </div>
           <h1 className="home-title">岛屿铃钱记</h1>
           <p className="home-desc">围坐牌桌比大小，铃钱输赢一键记</p>
+          {/* 季节飘落装饰 */}
+          <div className="seasonal-float">
+            <img className="seasonal-item seasonal-1" src="/elements/Cherry_Blossom_Petal.png" alt="" />
+            <img className="seasonal-item seasonal-2" src="/elements/Maple_Leaf.png" alt="" />
+            <img className="seasonal-item seasonal-3" src="/elements/Snowflake.png" alt="" />
+            <img className="seasonal-item seasonal-4" src="/elements/Cherry_Blossom_Petal.png" alt="" />
+            <img className="seasonal-item seasonal-5" src="/elements/Maple_Leaf.png" alt="" />
+          </div>
         </div>
 
         {/* 登录状态 */}
@@ -44,15 +54,15 @@ function HomePage() {
         {user && (
           <div className="home-app-grid">
             <button className="home-app-card home-app-teal" onClick={() => navigate('/create')}>
-              <div className="home-app-icon">🏝️</div>
+              <img className="home-app-img" src="/elements/Tent.png" alt="创建岛屿" />
               <div className="home-app-label">创建岛屿</div>
             </button>
             <button className="home-app-card home-app-yellow" onClick={() => navigate('/join')}>
-              <div className="home-app-icon">🐦</div>
+              <img className="home-app-img" src="/elements/Nook_Miles_Ticket.png" alt="加入岛屿" />
               <div className="home-app-label">加入岛屿</div>
             </button>
             <button className="home-app-card home-app-blue" onClick={() => navigate('/history')}>
-              <div className="home-app-icon">📜</div>
+              <img className="home-app-img" src="/elements/DIY_Recipe.png" alt="收获记录" />
               <div className="home-app-label">收获记录</div>
             </button>
           </div>
