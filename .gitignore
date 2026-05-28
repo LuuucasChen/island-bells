@@ -39,6 +39,9 @@ logs/
 deploy/_*.py
 deploy/server_key*
 
+# Qoder skills (contains credentials)
+.qoder/skills/
+
 # Node (web frontend)
 web/node_modules/
 web/dist/
