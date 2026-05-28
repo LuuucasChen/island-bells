@@ -35,6 +35,10 @@ Thumbs.db
 *.log
 logs/
 
+# Deploy temp scripts
+deploy/_*.py
+deploy/server_key*
+
 # Node (web frontend)
 web/node_modules/
 web/dist/
