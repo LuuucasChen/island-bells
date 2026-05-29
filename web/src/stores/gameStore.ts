@@ -48,6 +48,8 @@ interface HandState {
   last_aggressor_id: number | null
   revealed_players: number[]
   mucked_players: number[]
+  /** 我的实时牌型评估 (flop/turn/river 时后端计算，preflop 时为 null) */
+  my_evaluation: { hand_type: number; hand_type_name: string } | null
 }
 
 interface GameState {
@@ -69,6 +71,8 @@ interface GameState {
   endedByFold: boolean
   /** 最终结算数据 (牌局结束时) */
   finalSettlement: SettlementItem[] | null
+  /** 最近一次已结算的牌局 id (用于前端「牌局回顾」按钮) */
+  lastSettledHandId: number | null
 
   loadRoom: (code: string) => Promise<void>
   loadGameState: (roomId: number) => Promise<void>
@@ -76,7 +80,36 @@ interface GameState {
   stand: (roomId: number) => Promise<void>
   startGame: (roomId: number) => Promise<void>
   applyWsUpdate: (data: any) => void
+  /** 加载最近一次已结算牌局的完整回顾数据 */
+  loadHistoryHand: (handId: number) => Promise<HistoryHand>
   reset: () => void
+}
+
+/** 牌局回顾数据结构 (后端 GET /v1/hands/{id} 返回) */
+export interface HistoryHand {
+  hand_id: number
+  hand_number: number
+  status: string
+  pot_total: number
+  community_cards: CardData[]
+  my_hole_cards: CardData[]
+  all_hole_cards: Record<string, CardData[]>
+  evaluations: Record<string, { hand_type: number; hand_type_name: string }>
+  players: {
+    player_id: number
+    user_id: number
+    nickname: string
+    avatar_url: string
+    seat_number: number
+    chip_count: number
+    bet_this_round: number
+    is_folded: boolean
+    role: string | null
+  }[]
+  results: { winner_id: number; amount_won: number; is_split: number }[]
+  bets: { player_id: number; amount: number }[]
+  ended_by_fold: boolean
+  muck_player_id: number | null
 }
 
 export interface SettlementItem {
@@ -118,6 +151,7 @@ export const useGameStore = create<GameState>()((set, get) => ({
   showdownReveal: false,
   endedByFold: false,
   finalSettlement: null,
+  lastSettledHandId: null,
 
   loadRoom: async (code: string) => {
     const headers = getAuthHeaders()
@@ -165,6 +199,7 @@ export const useGameStore = create<GameState>()((set, get) => ({
       bbAmount: data.bb_amount || 0,
       initialChips: data.initial_chips || 0,
       finalSettlement: data.final_settlement || null,
+      lastSettledHandId: data.last_settled_hand_id ?? null,
     })
   },
 
@@ -252,6 +287,43 @@ export const useGameStore = create<GameState>()((set, get) => ({
       }
       const roomId = get().roomId
       get().loadGameState(roomId)
+    } else if (data.type === 'manual_sync') {
+      // 任意玩家触发的手动同步，房间内所有人重新拉取最新状态
+      // 不修改 showdownReveal / endedByFold 等任何 Showdown 字段，避免误触发翻牌动画
+      const roomId = get().roomId
+      get().loadGameState(roomId)
+    }
+  },
+
+  loadHistoryHand: async (handId: number) => {
+    // 加载指定牌局的完整回顾数据 (公共牌 / 所有人手牌 / 牌力评估 / 收获汇总)
+    const headers = getAuthHeaders()
+    const res = await fetch(`${API_BASE}/hands/${handId}`, { headers })
+    if (!res.ok) {
+      throw new Error(`牌局回顾加载失败 (${res.status})`)
+    }
+    const data = await res.json()
+    return {
+      hand_id: data.hand_id,
+      hand_number: data.hand_number,
+      status: data.status,
+      pot_total: data.pot_total,
+      community_cards: data.community_cards || [],
+      my_hole_cards: data.my_hole_cards || [],
+      all_hole_cards: data.all_hole_cards || {},
+      evaluations: data.evaluations || {},
+      players: data.players || [],
+      results: (data.results || []).map((r: any) => ({
+        winner_id: r.winner_id,
+        amount_won: r.amount_won,
+        is_split: r.is_split ? 1 : 0,
+      })),
+      bets: (data.bets || []).map((b: any) => ({
+        player_id: b.player_id,
+        amount: b.amount,
+      })),
+      ended_by_fold: !!data.ended_by_fold,
+      muck_player_id: data.muck_player_id ?? null,
     }
   },
 
@@ -271,6 +343,7 @@ export const useGameStore = create<GameState>()((set, get) => ({
       showdownReveal: false,
       endedByFold: false,
       finalSettlement: null,
+      lastSettledHandId: null,
     })
   },
 }))

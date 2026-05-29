@@ -44,6 +44,14 @@
   margin-bottom: 4px;
 }
 
+/* 回顾弹窗 header: 星星图标 */
+.showdown-header-icon-img {
+  width: 40px;
+  height: 40px;
+  object-fit: contain;
+  margin-bottom: 4px;
+}
+
 .showdown-title {
   font-size: 20px;
   font-weight: 800;
@@ -95,72 +103,60 @@
   border-radius: 20px;
 }
 
-/* 收获篮 */
-.showdown-pots {
-  padding: 4px 16px 12px;
-}
-
-.showdown-pot {
-  background: rgba(255, 255, 255, 0.5);
-  border: 2px solid #c4b89e;
+/* 收获汇总：集中展示赢家及其总收益 */
+.showdown-summary {
+  background: rgba(245, 195, 28, 0.08);
+  border: 1.5px solid rgba(245, 195, 28, 0.35);
   border-radius: 16px;
+  margin: 4px 16px 8px;
   padding: 10px 14px;
-  margin-bottom: 6px;
 }
 
-.pot-info {
+.showdown-summary .showdown-section-label {
+  color: #794f27;
+  font-size: 13px;
+  margin-bottom: 8px;
+}
+
+.showdown-summary-list {
   display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.showdown-summary-row {
+  display: flex;
+  align-items: center;
   justify-content: space-between;
-  align-items: center;
-  margin-bottom: 6px;
-}
-
-.pot-type-badge {
-  font-size: 12px;
+  padding: 4px 8px;
+  border-radius: 8px;
+  font-size: 14px;
   font-weight: 700;
   color: #794f27;
+  background: rgba(255, 255, 255, 0.4);
 }
 
-.pot-amount-display {
-  font-size: 16px;
-  font-weight: 800;
-  color: #f5c31c;
+.showdown-summary-row.is-me {
+  background: rgba(245, 195, 28, 0.18);
+  color: #5a3e1b;
 }
 
-.pot-winner {
-  border-top: 1px solid rgba(196, 184, 158, 0.4);
-  padding-top: 6px;
-}
-
-.winner-line {
+.showdown-summary-name {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 3px 0;
+  gap: 6px;
 }
 
-.winner-name {
-  font-size: 13px;
-  font-weight: 700;
-  color: #794f27;
-}
-
-.winner-amount {
-  font-size: 13px;
-  font-weight: 700;
-  color: #6fba2c;
-  margin-left: auto;
-}
-
-.winner-split {
-  font-size: 10px;
-  color: #9f927d;
-}
-
-.pot-eligible {
-  font-size: 12px;
+.showdown-summary-mine {
+  font-size: 11px;
   color: #9f927d;
   font-weight: 500;
+}
+
+.showdown-summary-amount {
+  font-size: 15px;
+  font-weight: 800;
+  color: #6fba2c;
 }
 
 .showdown-actions {
@@ -218,4 +214,41 @@
 .showdown-mucked .showdown-section-label {
   color: #9f927d;
   font-style: italic;
+}
+
+/* 我的战绩 (输家时展示) */
+.showdown-my-result {
+  background: rgba(244, 67, 54, 0.06);
+  border: 1.5px solid rgba(244, 67, 54, 0.25);
+  border-radius: 16px;
+  margin: 4px 16px 8px;
+  padding: 10px 14px;
+}
+
+.showdown-my-result .showdown-section-label {
+  color: #794f27;
+  font-size: 13px;
+  margin-bottom: 8px;
+}
+
+.showdown-my-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 4px 8px;
+  font-size: 14px;
+  font-weight: 700;
+  color: #794f27;
+  background: rgba(255, 255, 255, 0.4);
+  border-radius: 8px;
+}
+
+.showdown-my-label {
+  font-weight: 500;
+}
+
+.showdown-my-amount.loss {
+  color: #f44336;
+  font-size: 15px;
+  font-weight: 800;
 }

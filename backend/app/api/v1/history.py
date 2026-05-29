@@ -1,5 +1,6 @@
 """岛屿铃钱记 — 历史 API"""
 
+import json
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 from sqlalchemy import func
@@ -8,6 +9,7 @@ from app.database import get_db
 from app.dependencies import get_current_user
 from app.models import User, Room, RoomPlayer, Hand, Bet, Pot, HandResult, Rebuy
 from app.utils import NotFoundException
+from app.engine.hand_engine import HandEngine
 
 router = APIRouter()
 
@@ -46,10 +48,12 @@ async def get_hands(room_id: int, db: Session = Depends(get_db), current_user: U
 
 @router.get("/hands/{hand_id}")
 async def get_hand_detail(hand_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    """获取季节详情"""
+    """获取季节详情（含完整回顾数据：公共牌 / 所有人手牌 / 牌力评估 / 收获汇总）"""
     hand = db.query(Hand).filter(Hand.id == hand_id).first()
     if hand is None:
         raise NotFoundException("季节不存在")
+
+    room = db.query(Room).filter(Room.id == hand.room_id).first()
 
     # 获取所有投入
     bets = db.query(Bet).filter(Bet.hand_id == hand_id).order_by(Bet.created_at).all()
@@ -60,6 +64,79 @@ async def get_hand_detail(hand_id: int, db: Session = Depends(get_db), current_u
     # 获取收获结果
     results = db.query(HandResult).filter(HandResult.hand_id == hand_id).all()
 
+    # 公共牌
+    community_cards = json.loads(hand.community_cards) if hand.community_cards else []
+
+    # 所有人手牌（key 为 player_id 字符串）
+    hole_cards: dict = json.loads(hand.hole_cards) if hand.hole_cards else {}
+
+    # 玩家列表（与当前 game.py /state 结构保持一致）
+    players = db.query(RoomPlayer).filter(
+        RoomPlayer.room_id == hand.room_id,
+        RoomPlayer.is_active == 1,
+        RoomPlayer.seat_number >= 0,
+    ).order_by(RoomPlayer.seat_number).all()
+
+    # 计算每人本轮投入
+    current_round = hand.current_round if hand.current_round in ("preflop", "flop", "turn", "river") else "river"
+    round_bets = [b for b in bets if b.round == current_round]
+    player_round_bets: dict = {}
+    for b in round_bets:
+        player_round_bets[b.player_id] = player_round_bets.get(b.player_id, 0) + b.amount
+
+    # 已 fold 的玩家
+    folded_ids = {b.player_id for b in bets if b.action == "fold"}
+
+    players_data = []
+    for p in players:
+        user = db.query(User).filter(User.id == p.user_id).first()
+        role = None
+        if p.id == hand.dealer_player_id:
+            role = "D"
+        elif p.id == hand.sb_player_id:
+            role = "SB"
+        elif p.id == hand.bb_player_id:
+            role = "BB"
+        players_data.append({
+            "player_id": p.id,
+            "user_id": p.user_id,
+            "nickname": user.nickname if user else "",
+            "avatar_url": user.avatar_url if user else "",
+            "seat_number": p.seat_number,
+            "chip_count": p.chip_count,
+            "bet_this_round": player_round_bets.get(p.id, 0),
+            "is_folded": p.id in folded_ids,
+            "role": role,
+        })
+
+    # all_hole_cards: 跳过 fold 与 muck 的玩家（与 game.py /state 对齐）
+    muck_pid = hand.muck_player_id
+    all_hole_cards = {}
+    for pid_str, cards in hole_cards.items():
+        pid = int(pid_str)
+        if pid in folded_ids:
+            continue
+        if muck_pid and pid == muck_pid:
+            continue
+        all_hole_cards[pid_str] = cards
+
+    # 当前用户的手牌
+    my_player = next((p for p in players if p.user_id == current_user.id), None)
+    my_hole_cards = []
+    if my_player and hole_cards:
+        my_hole_cards = hole_cards.get(str(my_player.id), [])
+
+    # 牌力评估（settled 状态下计算所有存活玩家的牌型）
+    evaluations: dict = {}
+    if hand.status == "settled" and room is not None:
+        try:
+            engine = HandEngine(db, room)
+            evals = engine.get_hand_evaluations(hand)
+            evaluations = {str(pid): ev for pid, ev in evals.items()}
+        except Exception:
+            # 评估失败不影响其他字段返回
+            evaluations = {}
+
     return {
         "hand_id": hand.id,
         "hand_number": hand.hand_number,
@@ -69,6 +146,16 @@ async def get_hand_detail(hand_id: int, db: Session = Depends(get_db), current_u
         "dealer_player_id": hand.dealer_player_id,
         "sb_player_id": hand.sb_player_id,
         "bb_player_id": hand.bb_player_id,
+        "ended_by_fold": bool(hand.ended_by_fold),
+        "muck_player_id": hand.muck_player_id,
+        "mucked_players": [int(x) for x in (hand.mucked_players or "").split(",") if x],
+        "revealed_players": [int(x) for x in (hand.revealed_players or "").split(",") if x],
+        "community_cards": community_cards,
+        "hole_cards": hole_cards,
+        "all_hole_cards": all_hole_cards,
+        "my_hole_cards": my_hole_cards,
+        "evaluations": evaluations,
+        "players": players_data,
         "bets": [
             {
                 "bet_id": b.id,

@@ -69,20 +69,18 @@
   position: relative;
 }
 
-/* === 我的大头像框 (左上角) === */
+/* === 我的大头像框 (底部手牌条左侧) === */
 .my-avatar-frame {
-  position: absolute;
-  top: 2px;
-  left: 2px;
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   background: rgba(247, 243, 223, 0.95);
   border: 2px solid var(--app-bell-gold, #f5c31c);
-  border-radius: 16px;
-  padding: 8px 14px 8px 8px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
-  z-index: 5;
+  border-radius: 12px;
+  padding: 4px 10px 4px 4px;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08);
+  position: relative;
+  flex-shrink: 0;
   transition: border-color 0.3s, box-shadow 0.3s;
 }
 
@@ -116,21 +114,21 @@
 }
 
 .my-avatar-img {
-  width: 56px;
-  height: 56px;
-  border-radius: 12px;
+  width: 48px;
+  height: 48px;
+  border-radius: 10px;
   object-fit: cover;
   border: 1.5px solid rgba(196, 184, 158, 0.5);
   display: block;
 }
 
 .my-avatar-placeholder {
-  width: 56px;
-  height: 56px;
-  border-radius: 12px;
+  width: 48px;
+  height: 48px;
+  border-radius: 10px;
   background: var(--app-border-light, #c4b89e);
   color: #fff;
-  font-size: 22px;
+  font-size: 20px;
   font-weight: 800;
   display: flex;
   align-items: center;
@@ -168,7 +166,7 @@
   font-size: 14px;
   font-weight: 700;
   color: var(--app-text, #794f27);
-  max-width: 80px;
+  max-width: 54px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -445,26 +443,211 @@
 }
 
 /* === My Hole Cards === */
+/* 三栏 flex 布局：左侧头像 / 中间手牌严格居中 / 右侧铃钱。
+   左右两侧固定等宽，确保中间列在手牌条正中央。 */
 .my-hole-cards {
   display: flex;
-  justify-content: center;
-  gap: 8px;
-  padding: 8px 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 12px;
   background: var(--app-bg-content, rgb(247, 243, 223));
   border-top: 1px solid var(--app-border-light, #c4b89e);
   position: relative;
   width: 100%;
+  box-sizing: border-box;
 }
 
-.my-bells {
-  position: absolute;
-  left: 12px;
-  top: 50%;
-  transform: translateY(-50%);
+/* 左侧头像: 弹性宽度，含铃钱显示 (与右侧等宽保证手牌居中) */
+.my-hole-cards > .my-avatar-frame {
+  flex: 1 1 0;
+  min-width: 0;
+  max-width: 180px;
+  height: 64px;
+  justify-content: flex-start;
+  gap: 6px;
+  padding: 4px 6px 4px 4px;
+  position: relative;
+  box-sizing: border-box;
+}
+
+/* 头像框内的铃钱显示 */
+.my-avatar-bells {
   display: flex;
   flex-direction: column;
   align-items: center;
-  min-width: 56px;
+  justify-content: center;
+  min-width: 40px;
+  padding-left: 6px;
+  border-left: 1px solid rgba(196, 184, 158, 0.4);
+}
+
+.my-avatar-bells-icon {
+  font-size: 16px;
+  line-height: 1;
+}
+
+.my-avatar-bells-amount {
+  font-size: 13px;
+  font-weight: 800;
+  color: #5a3e1b;
+  margin-top: 2px;
+  line-height: 1.1;
+}
+
+/* 中间手牌区：占据剩余空间并严格居中 */
+.my-hole-cards-cards {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+/* 右侧牌型显示 (弹性宽度，与左侧等宽保证手牌居中) */
+.my-live-eval {
+  flex: 1 1 0;
+  min-width: 0;
+  max-width: 180px;
+  height: 64px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 6px 10px;
+  border-radius: 14px;
+  border: 1.5px solid var(--app-border-light, #c4b89e);
+  background: rgba(255, 255, 255, 0.4);
+  position: relative;
+  overflow: hidden;
+  transition: all 0.3s ease;
+  box-sizing: border-box;
+}
+
+.my-live-eval-name {
+  font-size: 15px;
+  font-weight: 800;
+  line-height: 1.3;
+  letter-spacing: 0.02em;
+}
+
+.my-live-eval-tier {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 1px 8px;
+  border-radius: 10px;
+  letter-spacing: 0.05em;
+}
+
+/* === 牌型分级效果 === */
+/* tier-0 弱 (高牌/一对): 中性灰调，无特效 */
+.my-live-eval-tier-0 {
+  border-color: #c4b89e;
+  background: rgba(196, 184, 158, 0.1);
+}
+.my-live-eval-tier-0 .my-live-eval-name { color: #794f27; }
+.my-live-eval-tier-0 .my-live-eval-tier {
+  color: #9f927d;
+  background: rgba(159, 146, 125, 0.15);
+}
+
+/* tier-1 中 (两对/三条): 绿色调，轻微提亮 */
+.my-live-eval-tier-1 {
+  border-color: rgba(111, 186, 44, 0.5);
+  background: linear-gradient(145deg, rgba(111, 186, 44, 0.08), rgba(111, 186, 44, 0.18));
+}
+.my-live-eval-tier-1 .my-live-eval-name { color: #4a8a1f; }
+.my-live-eval-tier-1 .my-live-eval-tier {
+  color: #fff;
+  background: #6fba2c;
+}
+
+/* tier-2 强 (顺子/同花): 青蓝色调，柔光边 */
+.my-live-eval-tier-2 {
+  border-color: rgba(25, 200, 185, 0.6);
+  background: linear-gradient(145deg, rgba(25, 200, 185, 0.1), rgba(25, 200, 185, 0.22));
+  box-shadow: 0 0 0 2px rgba(25, 200, 185, 0.12), 0 2px 8px rgba(25, 200, 185, 0.15);
+}
+.my-live-eval-tier-2 .my-live-eval-name { color: #19c8b9; }
+.my-live-eval-tier-2 .my-live-eval-tier {
+  color: #fff;
+  background: linear-gradient(135deg, #19c8b9, #0fa39a);
+}
+
+/* tier-3 顶级 (葫芦/四条/同花顺/皇家同花顺): 金色 + 呼吸闪光 */
+.my-live-eval-tier-3 {
+  border-color: #f5c31c;
+  background: linear-gradient(145deg, rgba(245, 195, 28, 0.18), rgba(255, 220, 80, 0.35));
+  box-shadow: 0 0 0 2px rgba(245, 195, 28, 0.25), 0 0 16px rgba(245, 195, 28, 0.35);
+  animation: evalTierGlow 1.8s ease-in-out infinite;
+}
+.my-live-eval-tier-3 .my-live-eval-name {
+  color: #b8860b;
+  background: linear-gradient(90deg, #f5c31c, #ffd700, #f5c31c);
+  background-size: 200% auto;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: evalTierShine 2.5s linear infinite;
+}
+.my-live-eval-tier-3 .my-live-eval-tier {
+  color: #7a5200;
+  background: linear-gradient(135deg, #f5c31c, #ffd700);
+  box-shadow: 0 1px 4px rgba(245, 195, 28, 0.4);
+}
+
+@keyframes evalTierGlow {
+  0%, 100% { box-shadow: 0 0 0 2px rgba(245, 195, 28, 0.25), 0 0 12px rgba(245, 195, 28, 0.3); }
+  50% { box-shadow: 0 0 0 3px rgba(255, 220, 80, 0.4), 0 0 22px rgba(255, 215, 0, 0.55); }
+}
+
+@keyframes evalTierShine {
+  0% { background-position: 0% center; }
+  100% { background-position: 200% center; }
+}
+
+/* 占位符 (preflop 待翻牌) */
+.my-live-eval-placeholder {
+  border-style: dashed;
+  border-color: rgba(196, 184, 158, 0.6);
+  background: rgba(255, 255, 255, 0.2);
+}
+.my-live-eval-placeholder .my-live-eval-name {
+  color: #9f927d;
+  font-style: italic;
+  font-weight: 600;
+}
+
+/* ── 移动端紧凑适配 ── */
+@media (max-width: 480px) {
+  .my-hole-cards {
+    gap: 8px;
+    padding: 4px 8px;
+  }
+  .my-hole-cards > .my-avatar-frame {
+    height: 52px;
+    gap: 4px;
+    padding: 3px 4px 3px 3px;
+  }
+  .my-hole-cards > .my-avatar-frame .my-avatar-img,
+  .my-hole-cards > .my-avatar-frame .my-avatar-placeholder {
+    width: 36px;
+    height: 36px;
+    border-radius: 8px;
+  }
+  .my-avatar-bells {
+    min-width: 32px;
+    padding-left: 4px;
+  }
+  .my-avatar-bells-icon { font-size: 13px; }
+  .my-avatar-bells-amount { font-size: 11px; }
+  .my-live-eval {
+    height: 52px;
+    padding: 4px 6px;
+    border-radius: 10px;
+  }
+  .my-live-eval-name { font-size: 13px; }
+  .my-live-eval-tier { font-size: 11px; }
 }
 
 .my-bells-icon {
@@ -654,6 +837,69 @@
 }
 .table-settle-btn:active {
   transform: scale(0.96);
+}
+
+/* 手动同步按钮 — 牌桌区域右下角 */
+.table-sync-btn {
+  position: absolute;
+  bottom: 8px;
+  right: 12px;
+  padding: 6px 18px;
+  border-radius: 50px;
+  background: var(--app-bg, #f8f4e8);
+  border: 1.5px solid var(--app-border-light, #c4b89e);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--app-text-body, #725d42);
+  font-family: inherit;
+  cursor: pointer;
+  box-shadow: 0 2px 0 0 #d4c9b4;
+  transition: all 0.15s;
+}
+.table-sync-btn:hover:not(:disabled) {
+  background: var(--app-primary-light, #e8dcc0);
+}
+.table-sync-btn:active:not(:disabled) {
+  transform: scale(0.96);
+}
+.table-sync-btn:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
+
+/* 牌局回顾按钮 — 牌桌区域右上角 (星星图标) */
+.table-history-btn {
+  position: absolute;
+  top: 8px;
+  right: 12px;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: var(--app-bg, #f8f4e8);
+  border: 1.5px solid var(--app-border-light, #c4b89e);
+  box-shadow: 0 2px 0 0 #d4c9b4;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 5px;
+  cursor: pointer;
+  transition: transform 0.15s;
+  z-index: 6;
+}
+.table-history-btn:hover:not(:disabled) {
+  transform: translateY(-1px) rotate(15deg);
+}
+.table-history-btn:active:not(:disabled) {
+  transform: scale(0.96);
+}
+.table-history-btn:disabled {
+  opacity: 0.5;
+  cursor: wait;
+}
+.table-history-btn img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
 }
 
 .owner-btn {

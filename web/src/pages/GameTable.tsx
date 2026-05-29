@@ -415,11 +415,54 @@ function GameTable() {
   const topPlayers = othersClockwise.slice(leftCount, leftCount + topCount)
   const rightPlayers = othersClockwise.slice(leftCount + topCount)
 
+  // === 牌局回顾 ===
+  // 右上角按钮点开: 加载最近一次已结算牌局的完整数据 (公共牌 / 手牌 / 收获汇总)
+  const [historyHand, setHistoryHand] = useState<any>(null)
+  const [showHistory, setShowHistory] = useState(false)
+  const [historyLoading, setHistoryLoading] = useState(false)
+
+  const handleOpenHistory = async () => {
+    if (historyLoading || !game.lastSettledHandId) return
+    setHistoryLoading(true)
+    try {
+      const h = await game.loadHistoryHand(game.lastSettledHandId)
+      setHistoryHand(h)
+      setShowHistory(true)
+    } catch (e) {
+      console.error('加载牌局回顾失败:', e)
+    } finally {
+      setHistoryLoading(false)
+    }
+  }
+
   // === 响应式缩放: 顶部玩家 >= 5 人时等比缩小座位框和牌桌 ===
   const tableScale = topCount >= 5 ? Math.max(0.72, 4.2 / topCount) : 1
 
   // 是否显示 showdown 弹窗 (仅在翻牌动画+结算完成后)
   const showShowdownModal = showdownPhase === 'settled' && (hand?.status === 'settled')
+
+  // === 手动同步刷新 ===
+  // 本地拉一次 + 调后端广播，让房间内所有人一起同步最新 state
+  const [syncing, setSyncing] = useState(false)
+  const [syncedTip, setSyncedTip] = useState(false)
+
+  const handleManualRefresh = async () => {
+    if (syncing) return
+    setSyncing(true)
+    try {
+      // 先本地拉一次以获得即时反馈，再调后端广播让所有人同步
+      await loadGame()
+      try {
+        await api.post(`/rooms/${roomId}/sync`)
+      } catch {
+        // 广播失败不影响本地反馈
+      }
+      setSyncedTip(true)
+      setTimeout(() => setSyncedTip(false), 1200)
+    } finally {
+      setSyncing(false)
+    }
+  }
 
   return (
     <div className="game-page">
@@ -445,39 +488,6 @@ function GameTable() {
 
       {/* Table Area */}
       <div className="table-area">
-        {/* 我的大头像框 */}
-        {myPlayer && (() => {
-          const avatarUrl = getCharacterAvatar(myPlayer.nickname)
-          let frameClass = 'my-avatar-frame'
-          if (isMyAllin) frameClass += ' my-avatar-allin'
-          else if (isMyTurn) frameClass += ' my-avatar-turn'
-          return (
-            <div className={frameClass}>
-              <div className="my-avatar-img-wrap">
-                {avatarUrl ? (
-                  <img className="my-avatar-img" src={avatarUrl} alt={myPlayer.nickname} />
-                ) : (
-                  <div className="my-avatar-placeholder">{myPlayer.nickname.charAt(0)}</div>
-                )}
-                {/* 战绩角标 */}
-                {winStreak >= 2 && (
-                  <span className="my-avatar-streak">🔥{winStreak}</span>
-                )}
-              </div>
-              <div className="my-avatar-info">
-                <div className="my-avatar-name">{myPlayer.nickname}</div>
-              </div>
-              {/* 铃钱雨动画 */}
-              {showBellRain && (
-                <div className="bell-rain">
-                  {Array.from({ length: 8 }).map((_, i) => (
-                    <span key={i} className="bell-rain-drop" style={{ animationDelay: `${i * 0.15}s`, left: `${10 + i * 11}%` }}>🔔</span>
-                  ))}
-                </div>
-              )}
-            </div>
-          )
-        })()}
         <div className="poker-table" style={{ '--table-scale': tableScale } as React.CSSProperties}>
           {/* 左侧玩家 */}
           {leftPlayers.length > 0 && (
@@ -579,20 +589,108 @@ function GameTable() {
             🎉 手动结算
           </button>
         )}
+
+        {/* 手动同步按钮 — 牌桌区域右下角，按钮点击后房间内所有人一起同步 */}
+        <button
+          className="table-sync-btn"
+          onClick={handleManualRefresh}
+          disabled={syncing}
+          title="若长时间未同步进度可手动刷新（房间内所有人一起同步）"
+        >
+          {syncing ? '同步中...' : syncedTip ? '✓ 已同步' : '🔄 同步'}
+        </button>
+
+        {/* 牌局回顾按钮 — 牌桌区域右上角，查看最近一次已结算牌局 */}
+        {game.lastSettledHandId && (
+          <button
+            className="table-history-btn"
+            onClick={handleOpenHistory}
+            disabled={historyLoading}
+            title="查看上一局牌局"
+          >
+            <img src="/elements/star_fragment_large.png" alt="history" />
+          </button>
+        )}
       </div>
 
-      {/* My hole cards (large, at bottom) — 左侧铃铛数量 */}
-      {myHoleCards.length > 0 && (
-        <div className="my-hole-cards">
-          <div className="my-bells">
-            <span className="my-bells-icon">🔔</span>
-            <span className="my-bells-amount">{formatBells(myChips)}</span>
+      {/* My hole cards (large, at bottom) — 左侧头像框(含铃钱) / 中间手牌 / 右侧牌型 */}
+      {myHoleCards.length > 0 && (() => {
+        // 牌型分级: 根据 hand_type 映射到 tier (决定渲染效果)
+        //   tier-0 高牌/一对   (弱)
+        //   tier-1 两对/三条   (中)
+        //   tier-2 顺子/同花   (强)
+        //   tier-3 葫芦/四条/同花顺/皇家同花顺 (顶级)
+        const eval_ = hand?.my_evaluation
+        const ht = eval_?.hand_type ?? 0
+        let tier = 0
+        let tierLabel = ''
+        if (ht >= 8) { tier = 3; tierLabel = '顶级' }      // 四条 / 同花顺 / 皇家同花顺
+        else if (ht >= 6) { tier = 2; tierLabel = '强' }   // 葫芦 / 顺子? 这里葫芦=6，顺子=4、同花=5，调整下面
+        else if (ht >= 4) { tier = 2; tierLabel = '强' }   // 顺子/同花
+        else if (ht >= 2) { tier = 1; tierLabel = '中' }   // 两对/三条
+        else { tier = 0; tierLabel = '弱' }                // 高牌/一对
+        // 修正: 顺子(4)/同花(5) 已纳入 tier-2，葫芦(6) 也归 tier-2 或 tier-3，此处统一 tier-3
+        if (ht === 6) { tier = 3; tierLabel = '顶级' }
+        const showEval = eval_ && currentRound !== 'preflop'
+        return (
+          <div className="my-hole-cards">
+            {/* 左侧：头像框 + 铃钱合并 */}
+            {myPlayer && (() => {
+              const avatarUrl = getCharacterAvatar(myPlayer.nickname)
+              let frameClass = 'my-avatar-frame'
+              if (isMyAllin) frameClass += ' my-avatar-allin'
+              else if (isMyTurn) frameClass += ' my-avatar-turn'
+              return (
+                <div className={frameClass}>
+                  <div className="my-avatar-img-wrap">
+                    {avatarUrl ? (
+                      <img className="my-avatar-img" src={avatarUrl} alt={myPlayer.nickname} />
+                    ) : (
+                      <div className="my-avatar-placeholder">{myPlayer.nickname.charAt(0)}</div>
+                    )}
+                    {/* 战绩角标 */}
+                    {winStreak >= 2 && (
+                      <span className="my-avatar-streak">🔥{winStreak}</span>
+                    )}
+                  </div>
+                  {/* 铃钱显示(合并在头像框内) */}
+                  <div className="my-avatar-bells">
+                    <span className="my-avatar-bells-icon">🔔</span>
+                    <span className="my-avatar-bells-amount">{formatBells(myChips)}</span>
+                  </div>
+                  {/* 铃钱雨动画（赢钱时从头像位置落下） */}
+                  {showBellRain && (
+                    <div className="bell-rain">
+                      {Array.from({ length: 8 }).map((_, i) => (
+                        <span key={i} className="bell-rain-drop" style={{ animationDelay: `${i * 0.15}s`, left: `${10 + i * 11}%` }}>🔔</span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )
+            })()}
+
+            {/* 中间：我的手牌 */}
+            <div className="my-hole-cards-cards">
+              {myHoleCards.map((card, i) => (
+                <PlayingCard key={i} suit={card.suit} rank={card.rank} size="large" />
+              ))}
+            </div>
+
+            {/* 右侧：牌型显示 (preflop 显示占位; flop+ 显示分级牌型) */}
+            {showEval ? (
+              <div className={`my-live-eval my-live-eval-tier-${tier}`}>
+                <span className="my-live-eval-name">{eval_.hand_type_name}</span>
+                <span className="my-live-eval-tier">{tierLabel}</span>
+              </div>
+            ) : (
+              <div className="my-live-eval my-live-eval-placeholder">
+                <span className="my-live-eval-name">待翻牌</span>
+              </div>
+            )}
           </div>
-          {myHoleCards.map((card, i) => (
-            <PlayingCard key={i} suit={card.suit} rank={card.rank} size="large" />
-          ))}
-        </div>
-      )}
+        )
+      })()}
 
       {/* Muck choice overlay (fold winner decides whether to show cards) */}
       {showdownPhase === 'muck_choice' && (
@@ -682,13 +780,13 @@ function GameTable() {
       {/* Showdown Modal */}
       {showShowdownModal && (
         <ShowdownModal
-          pots={hand?.pots || []}
           players={players}
           communityCards={communityCards}
           myHoleCards={myHoleCards}
           allHoleCards={hand?.all_hole_cards || {}}
           evaluations={evaluations}
           results={game.settleResults || []}
+          bets={(hand?.bets || []).map((b: any) => ({ player_id: b.player_id, amount: b.amount }))}
           isOwner={isOwner}
           onSettle={handleSettle}
           onNewHand={handleNewHand}
@@ -698,6 +796,25 @@ function GameTable() {
           endedByFold={endedByFold}
           muckPlayerId={muckPlayerId}
           onBustClose={myPlayer && myPlayer.chip_count <= 0 ? () => setShowdownDismissed(true) : undefined}
+        />
+      )}
+
+      {/* 牌局回顾弹窗: readonly 模式, 只展示数据 + 「关闭」按钮 */}
+      {showHistory && historyHand && (
+        <ShowdownModal
+          readonly
+          players={historyHand.players}
+          communityCards={historyHand.community_cards}
+          myHoleCards={historyHand.my_hole_cards}
+          allHoleCards={historyHand.all_hole_cards}
+          evaluations={historyHand.evaluations}
+          results={historyHand.results}
+          bets={historyHand.bets}
+          settled
+          myUserId={myUserId}
+          endedByFold={historyHand.ended_by_fold}
+          muckPlayerId={historyHand.muck_player_id}
+          onClose={() => setShowHistory(false)}
         />
       )}
 

@@ -12,7 +12,9 @@ from app.dependencies import get_current_user
 from app.models import User, Room, RoomPlayer, Hand, Bet, Pot, HandResult, Rebuy
 from app.engine.hand_engine import HandEngine, get_active_seated_players
 from app.engine.deck import cards_from_json
+from app.engine.evaluator import evaluate_hand, get_hand_type, get_hand_type_name
 from app.utils import BadRequestException, ForbiddenException, NotFoundException
+from app.utils import activity_tracker
 from app.api.ws.game_ws import manager as ws_manager
 
 router = APIRouter()
@@ -89,6 +91,9 @@ async def start_game(room_id: int, db: Session = Depends(get_db), current_user: 
     engine = HandEngine(db, room)
     hand = engine.start_new_hand()
 
+    # 记录活跃时间，启动死牌局倒计时
+    activity_tracker.touch(room_id)
+
     # WebSocket 广播
     await ws_manager.broadcast_to_room(room_id, {
         "type": "game_started",
@@ -127,6 +132,9 @@ async def new_hand(room_id: int, db: Session = Depends(get_db), current_user: Us
 
     engine = HandEngine(db, room)
     hand = engine.start_new_hand()
+
+    # 新一手开局也属于活跃事件，重置死牌局倒计时
+    activity_tracker.touch(room_id)
 
     # WebSocket 广播
     await ws_manager.broadcast_to_room(room_id, {
@@ -199,6 +207,9 @@ async def place_bet(hand_id: int, req: BetRequest, db: Session = Depends(get_db)
 
     # 重新加载 hand 获取更新后的数据
     db.refresh(hand)
+
+    # 玩家下注行动属于活跃事件
+    activity_tracker.touch(hand.room_id)
 
     # WebSocket 广播
     await ws_manager.broadcast_to_room(hand.room_id, {
@@ -290,6 +301,22 @@ async def end_game(room_id: int, db: Session = Depends(get_db), current_user: Us
     if room.status == "finished":
         raise BadRequestException("游戏已结束")
 
+    settlement = await _finish_room_impl(db, room, reason="owner")
+
+    return {
+        "message": "游戏已结束",
+        "room_id": room_id,
+        "settlement": settlement,
+    }
+
+
+async def _finish_room_impl(db: Session, room: Room, reason: str = "owner") -> list[dict]:
+    """结束房间的实现逻辑（HTTP 路由与后台死牌局清理共用）。
+
+    不做任何权限校验，调用方需自行验证。返回最终结算列表。
+    """
+    room_id = room.id
+
     # 结算当前未完成的季
     active_hand = (
         db.query(Hand)
@@ -339,14 +366,14 @@ async def end_game(room_id: int, db: Session = Depends(get_db), current_user: Us
         "data": {
             "room_id": room_id,
             "settlement": settlement,
+            "reason": reason,
         },
     })
 
-    return {
-        "message": "游戏已结束",
-        "room_id": room_id,
-        "settlement": settlement,
-    }
+    # 从活跃度跟踪表中移除该房间
+    activity_tracker.remove(room_id)
+
+    return settlement
 
 
 @router.post("/rooms/{room_id}/advance")
@@ -589,6 +616,9 @@ async def player_action_shortcut(room_id: int, req: BetRequest, db: Session = De
 
     db.refresh(active_hand)
 
+    # 玩家下注行动属于活跃事件，重置死牌局倒计时
+    activity_tracker.touch(room_id)
+
     # === 自动推进: 本轮下注结束 → 自动进入下一阶段 ===
     advanced = False
     if active_hand.turn_player_id is None and active_hand.status == "betting":
@@ -789,6 +819,30 @@ async def get_game_state(room_id: int, db: Session = Depends(get_db), current_us
         else:
             hand_data["evaluations"] = {}
 
+        # 我的实时牌型评估: flop/turn/river 阶段且我有 2 张手牌时返回
+        # 用于前端在底部手牌区显示「当前牌型」
+        my_eval = None
+        if (
+            my_player
+            and display_hand.hole_cards
+            and display_hand.community_cards
+            and display_hand.current_round in ("flop", "turn", "river", "showdown")
+        ):
+            try:
+                hole_data = json.loads(display_hand.hole_cards)
+                my_cards_raw = hole_data.get(str(my_player.id), [])
+                comm_cards = cards_from_json(display_hand.community_cards)
+                if len(my_cards_raw) == 2 and len(comm_cards) >= 3:
+                    hole_objs = cards_from_json(json.dumps(my_cards_raw))
+                    score = evaluate_hand(hole_objs, comm_cards)
+                    my_eval = {
+                        "hand_type": get_hand_type(score),
+                        "hand_type_name": get_hand_type_name(score),
+                    }
+            except Exception:
+                my_eval = None
+        hand_data["my_evaluation"] = my_eval
+
     # 如果牌局已结束，附加最终结算数据
     final_settlement = None
     if room.status == "finished":
@@ -818,6 +872,14 @@ async def get_game_state(room_id: int, db: Session = Depends(get_db), current_us
         settlement_list.sort(key=lambda s: s["net_profit"], reverse=True)
         final_settlement = settlement_list
 
+    # 最近一次已结算的牌局 id，用于前端「牌局回顾」按钮
+    last_settled_hand_id = (
+        db.query(Hand.id)
+        .filter(Hand.room_id == room_id, Hand.status == "settled")
+        .order_by(Hand.hand_number.desc())
+        .scalar()
+    )
+
     return {
         "room_id": room.id,
         "room_name": room.name,
@@ -828,4 +890,21 @@ async def get_game_state(room_id: int, db: Session = Depends(get_db), current_us
         "initial_chips": room.initial_chips,
         "current_hand": hand_data,
         "final_settlement": final_settlement,
+        "last_settled_hand_id": last_settled_hand_id,
     }
+
+
+@router.post("/rooms/{room_id}/sync")
+async def manual_sync(room_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    """手动同步：广播 manual_sync 让房间内所有玩家重新拉取最新 state。
+
+    仅需请求者是房间内玩家（避免被外部滥用）；不修改任何业务状态、不重置死牌局计时器。
+    """
+    _get_room_or_404(db, room_id)
+    _get_player_or_404(db, room_id, current_user.id)
+
+    await ws_manager.broadcast_to_room(room_id, {
+        "type": "manual_sync",
+        "data": {"room_id": room_id, "by_user_id": current_user.id},
+    })
+    return {"ok": True}
