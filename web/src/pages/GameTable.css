@@ -57,6 +57,13 @@
   padding: 2px;
   color: var(--app-text-secondary);
 }
+.ws-indicator.ws-reconnecting {
+  animation: ws-blink 1.2s ease-in-out infinite;
+}
+@keyframes ws-blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
 
 /* === Table Area === */
 .table-area {

@@ -1,12 +1,19 @@
 """岛屿铃钱记 — 游戏 WebSocket 处理器"""
 
+import asyncio
 import json
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Depends, Query
+import logging
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query
 from typing import Dict, Set
 
 from app.utils.security import decode_token
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter()
+
+# 心跳超时: 客户端每 25s 发一次 ping，60s 内未收到任何消息视为死连接
+_HEARTBEAT_TIMEOUT = 60
 
 
 class ConnectionManager:
@@ -96,7 +103,16 @@ async def ws_game(websocket: WebSocket, room_id: int, token: str = Query(...)):
 
     try:
         while True:
-            data = await websocket.receive_text()
+            # 带超时的接收: 超时未收到任何消息 (含 ping) 则判定为死连接
+            try:
+                data = await asyncio.wait_for(
+                    websocket.receive_text(),
+                    timeout=_HEARTBEAT_TIMEOUT,
+                )
+            except asyncio.TimeoutError:
+                logger.info("ws heartbeat timeout, closing connection for user %s in room %s", user_id, room_id)
+                break
+
             try:
                 msg = json.loads(data)
             except json.JSONDecodeError:
@@ -115,6 +131,8 @@ async def ws_game(websocket: WebSocket, room_id: int, token: str = Query(...)):
             elif msg_type == "ping":
                 await websocket.send_text(json.dumps({"type": "pong"}))
     except WebSocketDisconnect:
+        pass
+    finally:
         manager.disconnect(websocket, room_id)
         await manager.broadcast_to_room(room_id, {
             "type": "player_offline",

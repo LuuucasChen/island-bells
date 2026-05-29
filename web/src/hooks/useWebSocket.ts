@@ -6,6 +6,8 @@ export function useWebSocket(roomId: number | null) {
   const connect = useWsStore((s) => s.connect)
   const disconnect = useWsStore((s) => s.disconnect)
   const connected = useWsStore((s) => s.connected)
+  const reconnecting = useWsStore((s) => s.reconnecting)
+  const reconnectAttempts = useWsStore((s) => s.reconnectAttempts)
   const send = useWsStore((s) => s.send)
   const token = useAuthStore((s) => s.token)
   const mountedRef = useRef(false)
@@ -23,5 +25,5 @@ export function useWebSocket(roomId: number | null) {
     }
   }, [roomId, token])
 
-  return { connected, send }
+  return { connected, reconnecting, reconnectAttempts, send }
 }
