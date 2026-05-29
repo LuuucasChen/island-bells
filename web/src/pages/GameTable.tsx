@@ -22,7 +22,7 @@ function GameTable() {
   const navigate = useNavigate()
   const api = useApi()
   const game = useGameStore()
-  const { connected } = useWebSocket(Number(roomId))
+  const { connected, reconnecting, reconnectAttempts } = useWebSocket(Number(roomId))
 
   // Showdown orchestration state
   const [showdownPhase, setShowdownPhase] = useState<ShowdownPhase>('idle')
@@ -484,7 +484,13 @@ function GameTable() {
       </div>
 
       {/* WS indicator */}
-      <div className="ws-indicator">{connected ? '🟢 已连接' : '🔴 断线'}</div>
+      <div className={`ws-indicator ${reconnecting ? 'ws-reconnecting' : ''}`}>
+        {connected
+          ? '🟢 已连接'
+          : reconnecting
+            ? `🟡 重连中... (${reconnectAttempts})`
+            : '🔴 断线'}
+      </div>
 
       {/* Table Area */}
       <div className="table-area">
