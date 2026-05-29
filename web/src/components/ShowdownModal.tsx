@@ -101,7 +101,16 @@ export function ShowdownModal({
   const myEval = myPlayerId ? evaluations[String(myPlayerId)] : null
   const winnerEval = winnerIds.length > 0 ? evaluations[String(winnerIds[0])] : null
 
-  // 收获汇总：按 winner_id 聚合总收入（避免在每个池子里重复展示赢家，防止误导）
+  // 每个玩家的本局总下注 (用于计算净收益)
+  const betMap = (bets || []).reduce((acc, b) => {
+    acc[b.player_id] = (acc[b.player_id] || 0) + b.amount
+    return acc
+  }, {} as Record<number, number>)
+
+  // 我的本局投入
+  const myBetTotal = myPlayerId != null ? (betMap[myPlayerId] || 0) : 0
+
+  // 收获汇总：按 winner_id 聚合净收益 (总奖金 - 自己的下注 = 净赚)
   const winSummary = (results || []).reduce((acc, r) => {
     const key = r.winner_id
     if (!acc[key]) {
@@ -116,12 +125,18 @@ export function ShowdownModal({
     acc[key].total += r.amount_won
     return acc
   }, {} as Record<number, { winner_id: number; nickname: string; total: number; isMe: boolean }>)
+  // 减去每位赢家自己的下注，得到净收益
+  for (const key of Object.keys(winSummary)) {
+    const pid = Number(key)
+    winSummary[pid].total -= (betMap[pid] || 0)
+  }
   const winSummaryList = Object.values(winSummary).sort((a, b) => b.total - a.total)
 
-  // 我的本局投入 (输家时展示)
-  const myBetTotal = myPlayerId != null
-    ? (bets || []).filter((b) => b.player_id === myPlayerId).reduce((s, b) => s + b.amount, 0)
+  // 我的净收益 (赢为正，输为负)
+  const myWonTotal = myPlayerId != null
+    ? (results || []).filter((r) => r.winner_id === myPlayerId).reduce((s, r) => s + r.amount_won, 0)
     : 0
+  const myNetGain = myWonTotal - myBetTotal
 
   // 回顾弹窗 header: 星星图标 + 「上一局回顾」
   const headerIcon = readonly
@@ -150,7 +165,9 @@ export function ShowdownModal({
                     {s.nickname}
                     {s.isMe && <span className="showdown-summary-mine">(我)</span>}
                   </span>
-                  <span className="showdown-summary-amount">+{formatBells(s.total)}</span>
+                  <span className={`showdown-summary-amount ${s.total >= 0 ? 'gain' : 'loss'}`}>
+                    {s.total >= 0 ? '+' : ''}{formatBells(s.total)}
+                  </span>
                 </div>
               ))}
             </div>
@@ -209,13 +226,19 @@ export function ShowdownModal({
           </div>
         )}
 
-        {/* 我的战绩: 仅输家时展示 (赢家已在收获汇总中高亮，避免重复) */}
-        {settled && !isMeWinner && myPlayerId != null && myBetTotal > 0 && (
+        {/* 我的战绩: 始终展示 (显示净收益：赢为正 / 输为负) */}
+        {settled && myPlayerId != null && myBetTotal + myWonTotal > 0 && (
           <div className="showdown-section showdown-my-result">
             <div className="showdown-section-label">我的战绩</div>
             <div className="showdown-my-row">
               <span className="showdown-my-label">本局投入</span>
-              <span className="showdown-my-amount loss">-{formatBells(myBetTotal)}</span>
+              <span className="showdown-my-amount">{formatBells(myBetTotal)}</span>
+            </div>
+            <div className="showdown-my-row">
+              <span className="showdown-my-label">净收益</span>
+              <span className={`showdown-my-amount ${myNetGain >= 0 ? 'gain' : 'loss'}`}>
+                {myNetGain >= 0 ? '+' : '-'}{formatBells(Math.abs(myNetGain))}
+              </span>
             </div>
           </div>
         )}

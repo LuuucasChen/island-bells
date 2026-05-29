@@ -158,6 +158,9 @@
   font-weight: 800;
   color: #6fba2c;
 }
+.showdown-summary-amount.loss {
+  color: #f44336;
+}
 
 .showdown-actions {
   padding: 0 16px 16px;
@@ -247,6 +250,11 @@
   font-weight: 500;
 }
 
+.showdown-my-amount.gain {
+  color: #6fba2c;
+  font-size: 15px;
+  font-weight: 800;
+}
 .showdown-my-amount.loss {
   color: #f44336;
   font-size: 15px;

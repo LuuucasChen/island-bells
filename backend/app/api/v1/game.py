@@ -1,11 +1,14 @@
 """岛屿铃钱记 — 游戏 API"""
 
 import json
+import logging
 from datetime import datetime, timezone
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from pydantic import BaseModel
+
+logger = logging.getLogger(__name__)
 
 from app.database import get_db
 from app.dependencies import get_current_user
@@ -334,7 +337,7 @@ async def _finish_room_impl(db: Session, room: Room, reason: str = "owner") -> l
     # 计算最终结算: 所有玩家 (包括已离岛但 is_active=1 的)
     all_players = (
         db.query(RoomPlayer)
-        .filter(RoomPlayer.room_id == room_id, RoomPlayer.is_active == 1)
+        .filter(RoomPlayer.room_id == room.id, RoomPlayer.is_active == 1)
         .all()
     )
 
@@ -674,10 +677,19 @@ async def get_game_state(room_id: int, db: Session = Depends(get_db), current_us
     room = _get_room_or_404(db, room_id)
     _get_player_or_404(db, room_id, current_user.id)
 
+    try:
+        return _build_game_state(db, room, current_user)
+    except Exception:
+        logger.exception("Failed to build game state for room %s", room_id)
+        raise
+
+
+def _build_game_state(db: Session, room: Room, current_user: User) -> dict:
+
     # 当前进行中的季 (betting/settling) 或最近已结算的季
     active_hand = (
         db.query(Hand)
-        .filter(Hand.room_id == room_id, Hand.status.in_(["betting", "settling"]))
+        .filter(Hand.room_id == room.id, Hand.status.in_(["betting", "settling"]))
         .first()
     )
 
@@ -686,7 +698,7 @@ async def get_game_state(room_id: int, db: Session = Depends(get_db), current_us
     if not active_hand:
         settled_hand = (
             db.query(Hand)
-            .filter(Hand.room_id == room_id, Hand.status == "settled")
+            .filter(Hand.room_id == room.id, Hand.status == "settled")
             .order_by(Hand.hand_number.desc())
             .first()
         )
@@ -703,7 +715,7 @@ async def get_game_state(room_id: int, db: Session = Depends(get_db), current_us
 
         # 获取玩家列表
         players = db.query(RoomPlayer).filter(
-            RoomPlayer.room_id == room_id,
+            RoomPlayer.room_id == room.id,
             RoomPlayer.is_active == 1,
             RoomPlayer.seat_number >= 0,
         ).order_by(RoomPlayer.seat_number).all()
@@ -848,7 +860,7 @@ async def get_game_state(room_id: int, db: Session = Depends(get_db), current_us
     if room.status == "finished":
         all_players = (
             db.query(RoomPlayer)
-            .filter(RoomPlayer.room_id == room_id, RoomPlayer.is_active == 1)
+            .filter(RoomPlayer.room_id == room.id, RoomPlayer.is_active == 1)
             .all()
         )
         settlement_list = []
@@ -873,12 +885,13 @@ async def get_game_state(room_id: int, db: Session = Depends(get_db), current_us
         final_settlement = settlement_list
 
     # 最近一次已结算的牌局 id，用于前端「牌局回顾」按钮
-    last_settled_hand_id = (
+    _last_row = (
         db.query(Hand.id)
-        .filter(Hand.room_id == room_id, Hand.status == "settled")
+        .filter(Hand.room_id == room.id, Hand.status == "settled")
         .order_by(Hand.hand_number.desc())
-        .scalar()
+        .first()
     )
+    last_settled_hand_id = _last_row[0] if _last_row else None
 
     return {
         "room_id": room.id,
