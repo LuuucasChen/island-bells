@@ -363,6 +363,23 @@
   font-weight: 700;
 }
 
+/* Bug fix: 操作动作展示 (check/跟注/加注) */
+.seat-action-check {
+  color: var(--app-primary, #19c8b9);
+  background: rgba(25, 200, 185, 0.1);
+  padding: 1px calc(6px * var(--table-scale, 1));
+  border-radius: 20px;
+  display: inline-block;
+}
+
+.seat-action-bet {
+  color: var(--app-primary, #19c8b9);
+  background: rgba(25, 200, 185, 0.1);
+  padding: 1px calc(6px * var(--table-scale, 1));
+  border-radius: 20px;
+  display: inline-block;
+}
+
 .seat-eval {
   margin-top: 3px;
   font-size: calc(10px * var(--table-scale, 1));

@@ -27,6 +27,7 @@ interface Pot {
 interface Evaluation {
   hand_type: number
   hand_type_name: string
+  score?: number[]
 }
 
 interface HandState {
@@ -73,6 +74,8 @@ interface GameState {
   finalSettlement: SettlementItem[] | null
   /** 最近一次已结算的牌局 id (用于前端「牌局回顾」按钮) */
   lastSettledHandId: number | null
+  /** 每个玩家最近一次操作 (用于界面展示 check/call/raise 等) */
+  playerActions: Record<number, { action: string; amount: number }>
 
   loadRoom: (code: string) => Promise<void>
   loadGameState: (roomId: number) => Promise<void>
@@ -152,6 +155,7 @@ export const useGameStore = create<GameState>()((set, get) => ({
   endedByFold: false,
   finalSettlement: null,
   lastSettledHandId: null,
+  playerActions: {},
 
   loadRoom: async (code: string) => {
     const headers = getAuthHeaders()
@@ -246,17 +250,36 @@ export const useGameStore = create<GameState>()((set, get) => ({
   applyWsUpdate: (data: any) => {
     if (data.type === 'round_advance') {
       const wsData = data.data || {}
+      // 清空上一轮的操作记录，避免跨轮残留 (只保留触发推进的操作)
+      const actions: Record<number, { action: string; amount: number }> = {}
+      if (wsData.player_id && wsData.action) {
+        actions[wsData.player_id] = {
+          action: wsData.action,
+          amount: wsData.amount || 0,
+        }
+      }
+      set({ playerActions: actions })
       // 进入 showdown: 触发翻牌动画
       if (wsData.status === 'settling') {
         set({ showdownReveal: true, endedByFold: !!wsData.ended_by_fold })
       }
       const roomId = get().roomId
       get().loadGameState(roomId)
-    } else if (data.type === 'game_update' || data.type === 'new_hand') {
-      // BUG-1 修复: new_hand 时重置 showdownReveal，避免跨手牌残留
-      if (data.type === 'new_hand') {
-        set({ showdownReveal: false, endedByFold: false })
+    } else if (data.type === 'game_update') {
+      // Bug fix: 记录玩家操作 (用于展示 check 等动作)
+      if (data.data?.player_id && data.data?.action) {
+        const actions = { ...get().playerActions }
+        actions[data.data.player_id] = {
+          action: data.data.action,
+          amount: data.data.amount || 0,
+        }
+        set({ playerActions: actions })
       }
+      const roomId = get().roomId
+      get().loadGameState(roomId)
+    } else if (data.type === 'new_hand') {
+      // BUG-1 修复: new_hand 时重置 showdownReveal，避免跨手牌残留
+      set({ showdownReveal: false, endedByFold: false, playerActions: {} })
       const roomId = get().roomId
       get().loadGameState(roomId)
     } else if (data.type === 'hand_settled') {
@@ -344,6 +367,7 @@ export const useGameStore = create<GameState>()((set, get) => ({
       endedByFold: false,
       finalSettlement: null,
       lastSettledHandId: null,
+      playerActions: {},
     })
   },
 }))

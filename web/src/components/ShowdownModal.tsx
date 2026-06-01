@@ -31,6 +31,7 @@ interface ResultInfo {
 interface Evaluation {
   hand_type: number
   hand_type_name: string
+  score?: number[]
 }
 
 interface ShowdownModalProps {
@@ -107,8 +108,25 @@ export function ShowdownModal({
     return acc
   }, {} as Record<number, number>)
 
-  // 我的本局投入
-  const myBetTotal = myPlayerId != null ? (betMap[myPlayerId] || 0) : 0
+  // Bug fix: 计算有效下注 (考虑 fold 退款逻辑)
+  // 后端 _calculate_pots_for_hand 会在 fold 时退还多余筹码，
+  // 但 bets 数据是原始下注额，这里需应用同样的退款逻辑
+  const effectiveBetMap = (() => {
+    const map = { ...betMap }
+    const foldedPids = new Set(players.filter(p => p.is_folded).map(p => p.player_id))
+    if (foldedPids.size > 0) {
+      const maxFoldedBet = Math.max(...[...foldedPids].map(pid => betMap[pid] || 0))
+      for (const pid of Object.keys(map)) {
+        if (map[Number(pid)] > maxFoldedBet) {
+          map[Number(pid)] = maxFoldedBet
+        }
+      }
+    }
+    return map
+  })()
+
+  // 我的本局投入 (有效下注)
+  const myBetTotal = myPlayerId != null ? (effectiveBetMap[myPlayerId] || 0) : 0
 
   // 收获汇总：按 winner_id 聚合净收益 (总奖金 - 自己的下注 = 净赚)
   const winSummary = (results || []).reduce((acc, r) => {
@@ -125,10 +143,10 @@ export function ShowdownModal({
     acc[key].total += r.amount_won
     return acc
   }, {} as Record<number, { winner_id: number; nickname: string; total: number; isMe: boolean }>)
-  // 减去每位赢家自己的下注，得到净收益
+  // 减去每位赢家自己的有效下注，得到净收益
   for (const key of Object.keys(winSummary)) {
     const pid = Number(key)
-    winSummary[pid].total -= (betMap[pid] || 0)
+    winSummary[pid].total -= (effectiveBetMap[pid] || 0)
   }
   const winSummaryList = Object.values(winSummary).sort((a, b) => b.total - a.total)
 

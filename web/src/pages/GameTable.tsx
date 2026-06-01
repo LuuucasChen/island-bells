@@ -363,11 +363,25 @@ function GameTable() {
 
   const handleFinalSettle = async () => {
     try {
-      await api.post(`/rooms/${roomId}/end-game`)
+      const res = await api.post(`/rooms/${roomId}/end-game`)
+      // 直接使用 API 返回的结算数据，不依赖 loadGame 的异步更新
+      if (res?.settlement) {
+        useGameStore.setState({ finalSettlement: res.settlement, roomStatus: 'finished' })
+      }
       await loadGame()
       setShowFinalSettle(true)
     } catch (e) {
-      alert('最终结算失败: ' + (e as Error).message)
+      const errMsg = (e as Error).message || ''
+      // 如果游戏已结束（重复点击），仍尝试显示结算页
+      if (errMsg.includes('已结束')) {
+        await loadGame()
+        const state = useGameStore.getState()
+        if (state.roomStatus === 'finished' && state.finalSettlement) {
+          setShowFinalSettle(true)
+        }
+      } else {
+        alert('最终结算失败: ' + errMsg)
+      }
     }
   }
 
@@ -383,18 +397,38 @@ function GameTable() {
   const showInlineCards = showdownPhase === 'showing_cards'
 
   // 根据 evaluations 计算最佳牌型（赢家）
+  // Bug fix: 使用完整 score 比较，而非仅比较 hand_type
   const bestHandPlayerId = (() => {
     if (!evaluations || Object.keys(evaluations).length === 0) return null
+    // 优先使用 results (结算后确定赢家)
+    if (game.settleResults && game.settleResults.length > 0) {
+      return game.settleResults[0].winner_id
+    }
     let bestId: number | null = null
-    let bestType = -1
+    let bestScore: number[] = []
     for (const [pid, ev] of Object.entries(evaluations)) {
-      if (ev.hand_type > bestType) {
-        bestType = ev.hand_type
+      const score = ev.score || [ev.hand_type]
+      let isBetter = false
+      if (!bestId) {
+        isBetter = true
+      } else {
+        for (let i = 0; i < Math.max(score.length, bestScore.length); i++) {
+          const a = score[i] ?? 0
+          const b = bestScore[i] ?? 0
+          if (a > b) { isBetter = true; break }
+          if (a < b) { break }
+        }
+      }
+      if (isBetter) {
+        bestScore = score
         bestId = Number(pid)
       }
     }
     return bestId
   })()
+
+  // 获取玩家操作记录 (用于展示 check 等动作)
+  const playerActions = useGameStore((s) => s.playerActions)
 
   // === 环形座位布局（我固定底部，其他人顺时针环绕） ===
   // 德州扑克顺时针: 我 → 左侧 → 上侧 → 右侧 → 我
@@ -510,6 +544,7 @@ function GameTable() {
                   evaluations={evaluations}
                   inlineCards={showInlineCards ? (allHoleCards[String(player.player_id)] || null) : null}
                   isBestHand={showInlineCards && player.player_id === bestHandPlayerId}
+                  lastAction={playerActions[player.player_id] || null}
                 />
               ))}
             </div>
@@ -531,6 +566,7 @@ function GameTable() {
                   evaluations={evaluations}
                   inlineCards={showInlineCards ? (allHoleCards[String(player.player_id)] || null) : null}
                   isBestHand={showInlineCards && player.player_id === bestHandPlayerId}
+                  lastAction={playerActions[player.player_id] || null}
                 />
               ))}
             </div>
@@ -565,6 +601,7 @@ function GameTable() {
                   evaluations={evaluations}
                   inlineCards={showInlineCards ? (allHoleCards[String(player.player_id)] || null) : null}
                   isBestHand={showInlineCards && player.player_id === bestHandPlayerId}
+                  lastAction={playerActions[player.player_id] || null}
                 />
               ))}
             </div>
@@ -583,6 +620,7 @@ function GameTable() {
                 evaluations={evaluations}
                 inlineCards={showInlineCards ? (allHoleCards[String(myPlayer.player_id)] || null) : null}
                 isBestHand={showInlineCards && myPlayer.player_id === bestHandPlayerId}
+                lastAction={playerActions[myPlayer.player_id] || null}
               />
             </div>
           )}
@@ -873,12 +911,13 @@ interface PlayerSeatProps {
   isShowdown: boolean
   myUserId: number
   players: any[]
-  evaluations: Record<string, { hand_type: number; hand_type_name: string }>
+  evaluations: Record<string, { hand_type: number; hand_type_name: string; score?: number[] }>
   inlineCards?: { suit: 'spades' | 'hearts' | 'diamonds' | 'clubs'; rank: number }[] | null
   isBestHand?: boolean
+  lastAction?: { action: string; amount: number } | null
 }
 
-function PlayerSeat({ player, isMe, isTurn, isShowdown, myUserId, players, evaluations, inlineCards, isBestHand }: PlayerSeatProps) {
+function PlayerSeat({ player, isMe, isTurn, isShowdown, myUserId, players, evaluations, inlineCards, isBestHand, lastAction }: PlayerSeatProps) {
   const isFolded = player.is_folded
   const isAllin = player.chip_count === 0 && !isFolded
 
@@ -914,6 +953,15 @@ function PlayerSeat({ player, isMe, isTurn, isShowdown, myUserId, players, evalu
       )}
       {isFolded && <div className="seat-status">已弃牌</div>}
       {isAllin && <div className="seat-status seat-allin-text">All-in</div>}
+      {/* Bug fix: 显示玩家操作动作 (check/call/raise 等) */}
+      {!isFolded && !isAllin && lastAction && lastAction.amount === 0 && lastAction.action === 'check' && (
+        <div className="seat-status seat-action-check">过牌</div>
+      )}
+      {!isFolded && !isAllin && lastAction && lastAction.amount > 0 && lastAction.action !== 'fold' && lastAction.action !== 'allin' && (
+        <div className="seat-status seat-action-bet">
+          {lastAction.action === 'call' ? '跟注' : lastAction.action === 'raise' ? '加注' : lastAction.action} {formatBells(lastAction.amount)}
+        </div>
+      )}
       {/* Inline card display during showing_cards phase */}
       {inlineCards && inlineCards.length > 0 && (
         <div className="seat-inline-cards">

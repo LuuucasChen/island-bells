@@ -639,6 +639,25 @@ class HandEngine:
                 hand.turn_player_id = None
                 self._compute_last_aggressor(hand)
                 self._calculate_pots_for_hand(hand)
+            elif len(actionable) <= 1:
+                # 只有 0-1 人可操作，且其余存活玩家已 all-in → 无需继续下注，自动发完公共牌到 showdown
+                # (0 人的情况上面已处理，这里处理 1 人的情况)
+                active_non_folded = [p for p in all_players if p.id not in folded_ids]
+                if len(active_non_folded) > 1:
+                    # 存在 all-in 玩家，唯一有筹码的人无需再下注
+                    while len(community) < 5:
+                        deck.burn(1)
+                        community.extend(deck.deal(1))
+                    hand.community_cards = cards_to_json(community)
+                    hand.deck_state = deck.to_json()
+                    hand.current_round = "showdown"
+                    hand.status = "settling"
+                    hand.turn_player_id = None
+                    self._compute_last_aggressor(hand)
+                    self._calculate_pots_for_hand(hand)
+                else:
+                    # 只剩一人 (其余都 fold)，不应该到这里，但做兜底处理
+                    hand.turn_player_id = actionable[0].id if actionable else None
             else:
                 seat_numbers = [p.seat_number for p in all_players]
                 dealer = self.db.query(RoomPlayer).filter(RoomPlayer.id == hand.dealer_player_id).first()
@@ -818,6 +837,7 @@ class HandEngine:
                         evaluations[p.id] = {
                             "hand_type": score[0],
                             "hand_type_name": get_hand_type_name(score),
+                            "score": list(score),
                         }
         return evaluations
 
