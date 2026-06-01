@@ -319,14 +319,19 @@
   transition: font-size 0.3s ease;
 }
 
-/* === 座位小头像 === */
+/* === 座位小头像容器 (含奖杯定位) === */
+.seat-avatar-wrap {
+  position: relative;
+  display: inline-block;
+  margin: 0 auto calc(4px * var(--table-scale, 1));
+}
+
 .seat-avatar {
   width: calc(32px * var(--table-scale, 1));
   height: calc(32px * var(--table-scale, 1));
   border-radius: 8px;
   object-fit: cover;
   display: block;
-  margin: 0 auto calc(4px * var(--table-scale, 1));
   border: 1.5px solid rgba(196, 184, 158, 0.5);
   transition: width 0.3s ease, height 0.3s ease;
 }
@@ -409,18 +414,28 @@
 /* === Winner Badge (🏆 during showing_cards) === */
 .seat-winner-badge {
   position: absolute;
-  top: -14px;
-  left: 50%;
-  transform: translateX(-50%);
-  font-size: 20px;
+  top: -10px;
+  right: -10px;
+  font-size: 16px;
   animation: winnerBounce 0.8s ease infinite alternate;
   filter: drop-shadow(0 2px 4px rgba(0,0,0,0.3));
   z-index: 10;
 }
 
 @keyframes winnerBounce {
-  from { transform: translateX(-50%) translateY(0) scale(1); }
-  to { transform: translateX(-50%) translateY(-4px) scale(1.15); }
+  from { transform: translateY(0) scale(1); }
+  to { transform: translateY(-3px) scale(1.15); }
+}
+
+/* === 我的大头像框 — 赢家奖杯 === */
+.my-avatar-trophy {
+  position: absolute;
+  top: -10px;
+  right: -10px;
+  font-size: 18px;
+  animation: winnerBounce 0.8s ease infinite alternate;
+  filter: drop-shadow(0 2px 4px rgba(0,0,0,0.3));
+  z-index: 10;
 }
 
 /* === Table Center === */
@@ -1178,6 +1193,37 @@
   text-transform: lowercase;
   line-height: 1;
   transition: all 0.15s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* 内联紧凑版 fold/allin (与 call/check 同行) */
+.action-btn-inline {
+  flex: 0 0 auto;
+  padding: 9px 14px;
+  font-size: 13px;
+}
+
+/* raise 快捷按钮 — 琥珀色区分 */
+.quick-chip-raise {
+  background: #fef3e0;
+  border-color: #e0a830;
+  color: #8a6914;
+  box-shadow: 0 3px 0 0 #c89420;
+}
+.quick-chip-raise:hover {
+  background: #fdebc4;
+  border-color: #c89420;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 0 0 #c89420;
+}
+.quick-chip-raise:active {
+  transform: translateY(2px);
+  box-shadow: 0 1px 0 0 #c89420;
+}
+
+/* 加注行 */
+.quick-raise-row {
+  margin-bottom: 6px;
+  padding-top: 2px;
 }
 
 /* fold — 暖灰大地色（禁止蓝色!） */

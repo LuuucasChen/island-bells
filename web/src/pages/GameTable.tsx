@@ -47,9 +47,9 @@ function GameTable() {
     loadGame()
   }, [roomId])
 
-  // 每隔几秒刷新 (兜底，WS 断线时用)
+  // 每隔几秒刷新 (兜底，WS 断线时用; 连接时 8s 保证岛主数据及时同步)
   useEffect(() => {
-    const timer = setInterval(loadGame, connected ? 30000 : 5000)
+    const timer = setInterval(loadGame, connected ? 8000 : 5000)
     return () => clearInterval(timer)
   }, [roomId, connected])
 
@@ -130,8 +130,9 @@ function GameTable() {
       await api.post(`/rooms/${roomId}/settle`)
       await loadGame()
       setShowdownPhase('settled')
+      // 延迟二次拉取，确保 WS 广播的状态已落库
+      setTimeout(() => loadGame(), 1000)
     } catch (e) {
-      // BUG-4 修复: 失败时不回退到 idle，保持 auto_settling，依赖手动结算按钮
       console.error('自动结算失败，请岛主手动结算:', e)
     }
   }
@@ -281,6 +282,8 @@ function GameTable() {
       await api.post(`/rooms/${roomId}/settle`)
       await loadGame()
       setShowdownPhase('settled')
+      // 延迟二次拉取，确保 WS 广播的状态已落库
+      setTimeout(() => loadGame(), 1000)
     } catch (e) {
       alert('收获失败: ' + (e as Error).message)
     }
@@ -291,6 +294,7 @@ function GameTable() {
       await api.post(`/rooms/${roomId}/new-hand`)
       setShowdownPhase('idle')
       await loadGame()
+      setTimeout(() => loadGame(), 1000)
     } catch (e) {
       alert('开始新一季失败: ' + (e as Error).message)
     }
@@ -696,6 +700,10 @@ function GameTable() {
                     {winStreak >= 2 && (
                       <span className="my-avatar-streak">🔥{winStreak}</span>
                     )}
+                    {/* 赢家奖杯 (showing_cards 阶段) */}
+                    {showInlineCards && myPlayer.player_id === bestHandPlayerId && (
+                      <span className="my-avatar-trophy">🏆</span>
+                    )}
                   </div>
                   {/* 铃钱显示(合并在头像框内) */}
                   <div className="my-avatar-bells">
@@ -766,7 +774,7 @@ function GameTable() {
       <div className="action-panel">
         {game.roomStatus === 'playing' && isMyTurn && (
           <>
-            {/* 快捷操作行: 平call / check + raise 预设 */}
+            {/* 主操作行: call/check (最突出) */}
             <div className="quick-amounts">
               {toCall > 0 ? (
                 <button className="quick-chip quick-chip-call" onClick={() => handleAction('call')}>
@@ -777,35 +785,39 @@ function GameTable() {
                   check
                 </button>
               )}
-              <span className="quick-raise-label">raise:</span>
-              {quickAmounts.map((amt) => (
-                <button key={amt} className="quick-chip" onClick={() => handleAction('raise', amt)}>
-                  {formatBells(amt)}
-                </button>
-              ))}
-            </div>
-            {/* 自定义加注 */}
-            <div className="custom-raise">
-              <input
-                type="number"
-                className="custom-raise-input"
-                placeholder={`自定义 (最少${formatBells(minLegalRaise)})`}
-                value={customAmount}
-                onChange={(e) => { setCustomAmount(e.target.value); setCustomError('') }}
-                onKeyDown={(e) => e.key === 'Enter' && handleCustomRaise()}
-              />
-              <button className="custom-raise-btn" onClick={handleCustomRaise}>追加</button>
-            </div>
-            {customError && <div className="custom-raise-error">{customError}</div>}
-            {/* 主操作按钮: fold + all in */}
-            <div className="action-buttons">
-              <button className="action-btn action-btn-fold" onClick={() => handleAction('fold')}>
+              <button className="action-btn action-btn-fold action-btn-inline" onClick={() => handleAction('fold')}>
                 fold
               </button>
-              <button className="action-btn action-btn-allin" onClick={() => handleAction('allin')}>
+              <button className="action-btn action-btn-allin action-btn-inline" onClick={() => handleAction('allin')}>
                 all in
               </button>
             </div>
+            {/* 加注行: 仅在有合法加注金额时显示 */}
+            {quickAmounts.length > 0 && (
+              <div className="quick-amounts quick-raise-row">
+                <span className="quick-raise-label">raise:</span>
+                {quickAmounts.map((amt) => (
+                  <button key={amt} className="quick-chip quick-chip-raise" onClick={() => handleAction('raise', amt)}>
+                    {formatBells(amt)}
+                  </button>
+                ))}
+              </div>
+            )}
+            {/* 自定义加注: 仅在有筹码可加注时显示 */}
+            {myChips > toCall && (
+              <div className="custom-raise">
+                <input
+                  type="number"
+                  className="custom-raise-input"
+                  placeholder={`自定义 (最少${formatBells(minLegalRaise)})`}
+                  value={customAmount}
+                  onChange={(e) => { setCustomAmount(e.target.value); setCustomError('') }}
+                  onKeyDown={(e) => e.key === 'Enter' && handleCustomRaise()}
+                />
+                <button className="custom-raise-btn" onClick={handleCustomRaise}>追加</button>
+              </div>
+            )}
+            {customError && <div className="custom-raise-error">{customError}</div>}
           </>
         )}
 
@@ -941,9 +953,14 @@ function PlayerSeat({ player, isMe, isTurn, isShowdown, myUserId, players, evalu
           {ROLE_TERMS[player.role] || player.role}
         </span>
       )}
-      {seatAvatarUrl && (
-        <img className="seat-avatar" src={seatAvatarUrl} alt={player.nickname} />
-      )}
+      <div className="seat-avatar-wrap">
+        {seatAvatarUrl && (
+          <img className="seat-avatar" src={seatAvatarUrl} alt={player.nickname} />
+        )}
+        {isBestHand && (
+          <div className="seat-winner-badge">🏆</div>
+        )}
+      </div>
       <div className="seat-nickname">{player.nickname}</div>
       <div className="seat-bells">🔔 {formatBells(player.chip_count)}</div>
       {player.bet_this_round > 0 && (
@@ -969,9 +986,6 @@ function PlayerSeat({ player, isMe, isTurn, isShowdown, myUserId, players, evalu
             <PlayingCard key={i} suit={card.suit} rank={card.rank} size="small" />
           ))}
         </div>
-      )}
-      {isBestHand && (
-        <div className="seat-winner-badge">🏆</div>
       )}
       {eval_ && isShowdown && !isFolded && (
         <div className="seat-eval">{eval_.hand_type_name}</div>
