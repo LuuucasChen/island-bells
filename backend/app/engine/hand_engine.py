@@ -117,12 +117,9 @@ def get_action_order(seat_numbers: list[int], dealer_seat: int, current_round: s
         for i in range(n):
             order.append(sorted_seats[(start_idx + i) % n])
     else:
-        # Post-flop: SB(庄家下一位)先行动
-        if n == 2:
-            # Heads-up: SB(=庄家)先行动
-            start_idx = dealer_idx
-        else:
-            start_idx = (dealer_idx + 1) % n
+        # Post-flop: 庄家下一位先行动
+        # 注意 Heads-up (n==2) 同样适用: 翻后是 BB(非庄家)先行动，庄家最后行动
+        start_idx = (dealer_idx + 1) % n
         order = []
         for i in range(n):
             order.append(sorted_seats[(start_idx + i) % n])
@@ -250,9 +247,12 @@ class HandEngine:
         # 轮转庄家 (确保庄家在可玩玩家中)
         current_dealer = self.room.dealer_seat
         if current_dealer not in seat_numbers:
-            # 庄家铃钱为 0, 顺延到下一个有效座位
-            current_dealer = seat_numbers[0]
-        new_dealer_seat = rotate_dealer(seat_numbers, current_dealer)
+            # 前庄家已离开座位: 在升序座位环上找第一个大于旧庄位的座位，
+            # 无则取最小座位 (保持轮转方向，不跳位)
+            greater = [s for s in seat_numbers if s > current_dealer]
+            new_dealer_seat = min(greater) if greater else min(seat_numbers)
+        else:
+            new_dealer_seat = rotate_dealer(seat_numbers, current_dealer)
         positions = assign_positions(seat_numbers, new_dealer_seat)
 
         # 更新房间庄位
@@ -336,17 +336,46 @@ class HandEngine:
 
     def place_bet(self, hand: Hand, player: RoomPlayer, action: str, amount: int = 0) -> Bet:
         """玩家投入铃钱 — 按德州扑克顺序下注"""
+        # 行锁: 锁住本手记录直到事务提交，防止并发请求同时通过 turn 校验导致重复扣码
+        # (MySQL 上渲染 SELECT ... FOR UPDATE 真正生效; SQLite 方言静默忽略,
+        #  单进程事件循环下由同步执行的串行性保证)
+        hand = (
+            self.db.query(Hand)
+            .filter(Hand.id == hand.id)
+            .with_for_update()
+            .first()
+        )
+
         if hand.status != "betting":
             raise BadRequestException("当前季节不在投入阶段")
 
-        # 校验是否轮到该玩家
-        if hand.turn_player_id and hand.turn_player_id != player.id:
+        # 校验是否轮到该玩家 (turn_player_id 为 None 时本轮已结束，无人可行动)
+        if hand.turn_player_id != player.id:
             raise BadRequestException("还没轮到你行动")
 
-        # 获取当前轮已有下注
+        # 校验该玩家是本手参与者 (发牌时确定，中途入座者不可行动)
+        participant_ids = self._get_hand_participant_ids(hand)
+        if player.id not in participant_ids:
+            raise BadRequestException("你不是本季牌局的参与者")
+
+        # 校验该玩家仍在座位上 (已离局者视同无行动能力)
+        if player.is_active != 1 or player.seat_number < 0:
+            raise BadRequestException("你已离开座位，无法行动")
+
+        # 校验该玩家未 fold
+        already_folded = (
+            self.db.query(Bet)
+            .filter(Bet.hand_id == hand.id, Bet.player_id == player.id, Bet.action == "fold")
+            .first()
+        )
+        if already_folded:
+            raise BadRequestException("你已弃牌，无法行动")
+
+        # 获取当前轮已有下注 (按 id 升序 = 时间序)
         round_bets = (
             self.db.query(Bet)
             .filter(Bet.hand_id == hand.id, Bet.round == hand.current_round)
+            .order_by(Bet.id)
             .all()
         )
 
@@ -358,8 +387,8 @@ class HandEngine:
         current_max_bet = max(player_bets.values()) if player_bets else 0
         my_bet = player_bets.get(player.id, 0)
 
-        # 计算最小加注额 (默认 = BB)
-        min_raise = self.room.bb_amount
+        # 计算最小加注增量: 本轮最后一次有效加注的增量 (无加注时 = BB)
+        min_raise = self.compute_min_raise(round_bets)
 
         # 校验动作
         result = validate_bet_action(
@@ -407,6 +436,53 @@ class HandEngine:
 
         return bet
 
+    # ==================== 本手参与者 ====================
+
+    def _get_hand_participant_ids(self, hand: Hand) -> set[int]:
+        """本手参与者 id 集合 — 以发牌时写入的 hole_cards key 为准
+
+        发牌时已按 chip_count > 0 过滤。中途入座者不在其中；
+        已离局 (is_active=0) 但未 fold 的参与者仍在其中 (保留赢池资格)。
+        """
+        if not hand.hole_cards:
+            return set()
+        try:
+            return {int(pid) for pid in json.loads(hand.hole_cards).keys()}
+        except (ValueError, TypeError):
+            return set()
+
+    def _get_hand_participants(self, hand: Hand) -> list[RoomPlayer]:
+        """本手参与者 RoomPlayer 列表，按座位号排序"""
+        ids = self._get_hand_participant_ids(hand)
+        if not ids:
+            return []
+        return (
+            self.db.query(RoomPlayer)
+            .filter(RoomPlayer.id.in_(ids))
+            .order_by(RoomPlayer.seat_number)
+            .all()
+        )
+
+    def compute_min_raise(self, round_bets: list[Bet]) -> int:
+        """本轮最小加注增量 = 最后一次有效加注的增量 (无加注时 = BB)
+
+        按 Bet.id 升序 (= 时间序) 遍历本轮下注，维护当前注额档位；
+        每当出现新的更高档位，增量 = 新档位 - 旧档位。
+        all-in 等不足当前最小加注的增量不算合法加注，不更新 min_raise。
+        """
+        min_raise = self.room.bb_amount
+        level = 0  # 当前最高注额档位
+        totals: dict[int, int] = {}
+        for b in sorted(round_bets, key=lambda x: x.id):
+            totals[b.player_id] = totals.get(b.player_id, 0) + b.amount
+            total = totals[b.player_id]
+            if total > level:
+                increment = total - level
+                if increment >= min_raise:
+                    min_raise = increment
+                level = total
+        return min_raise
+
     def _advance_turn(self, hand: Hand, acting_player: RoomPlayer, action: str, amount: int):
         """下注后推进到下一个行动玩家
 
@@ -414,9 +490,11 @@ class HandEngine:
         - 盲注 (blind) 不算作一次主动行动
         - 只有当所有可操作玩家都已行动且注额匹配时，本轮才结束
         - BB 在 preflop 有权 check/raise (option)
+        - 行动/存活判定只看本手参与者 (hole_cards key)，中途入座者不算；
+          已离局但未 fold 的参与者仍算存活，但无行动能力 (轮转时跳过)
         """
-        # 获取所有活跃入座玩家
-        all_players = get_active_seated_players(self.db, hand.room_id)
+        # 本手参与者 (发牌时确定)
+        all_players = self._get_hand_participants(hand)
 
         # 已 fold 的玩家
         folded_ids = {
@@ -425,7 +503,7 @@ class HandEngine:
             .all()
         }
 
-        # 非 fold 的活跃玩家
+        # 存活玩家: 未 fold 的参与者 (含已离局者)
         active_players = [p for p in all_players if p.id not in folded_ids]
 
         if len(active_players) <= 1:
@@ -451,8 +529,11 @@ class HandEngine:
             if b.action != "blind":
                 acted_ids.add(b.player_id)
 
-        # 可操作玩家: 非 fold 且 chip_count > 0
-        actionable_players = [p for p in active_players if p.chip_count > 0]
+        # 可操作玩家: 存活 + 在座 + 有筹码 (已离局者视同无行动能力)
+        actionable_players = [
+            p for p in active_players
+            if p.is_active == 1 and p.seat_number >= 0 and p.chip_count > 0
+        ]
 
         if len(actionable_players) == 0:
             hand.turn_player_id = None
@@ -494,6 +575,8 @@ class HandEngine:
             next_player = self._find_player_by_seat(all_players, next_seat)
             if next_player.id in folded_ids:
                 continue  # 已 fold
+            if next_player.is_active != 1 or next_player.seat_number < 0:
+                continue  # 已离局，无行动能力
             if next_player.chip_count == 0:
                 continue  # 已 all-in
             if next_player.id in acted_ids and player_bets.get(next_player.id, 0) >= current_max_bet:
@@ -511,22 +594,23 @@ class HandEngine:
         2. 如果没有激进者 (全部 check/call)，取庄家后第一个存活玩家
         3. last_aggressor 自动加入 revealed_players (必须亮牌)
         """
-        # 查找最后的 raise/allin (按时间倒序)
+        # 查找最后的 raise/allin (按自增 id 倒序 = 时间序；
+        # created_at 是秒级 server_default，同秒多次加注会取错人)
         last_aggro_bet = (
             self.db.query(Bet)
             .filter(
                 Bet.hand_id == hand.id,
                 Bet.action.in_(["raise", "allin"]),
             )
-            .order_by(Bet.created_at.desc())
+            .order_by(Bet.id.desc())
             .first()
         )
 
         if last_aggro_bet:
             hand.last_aggressor_id = last_aggro_bet.player_id
         else:
-            # 无人激进: 庄家后第一个存活玩家自动亮牌
-            all_players = get_active_seated_players(self.db, hand.room_id)
+            # 无人激进: 庄家后第一个存活玩家自动亮牌 (只看本手参与者)
+            all_players = self._get_hand_participants(hand)
             all_bets = self.db.query(Bet).filter(Bet.hand_id == hand.id).all()
             folded_ids = {b.player_id for b in all_bets if b.action == "fold"}
             alive = [p for p in all_players if p.id not in folded_ids]
@@ -556,7 +640,7 @@ class HandEngine:
         注意: fold 退款逻辑统一在 _calculate_pots_for_hand 中处理，
               这里只负责状态转换和补发公共牌。
         """
-        all_players = get_active_seated_players(self.db, hand.room_id)
+        all_players = self._get_hand_participants(hand)
         all_bets = self.db.query(Bet).filter(Bet.hand_id == hand.id).all()
         folded_ids = {b.player_id for b in all_bets if b.action == "fold"}
         alive = [p for p in all_players if p.id not in folded_ids]
@@ -585,6 +669,11 @@ class HandEngine:
         """推进到下一阶段，并发公共牌"""
         if hand.status != "betting":
             raise BadRequestException("当前季节不在投入阶段")
+
+        # 本轮下注必须已结束 (turn_player_id 为 None) 才允许推进，
+        # 防止跳过尚未行动的玩家
+        if hand.turn_player_id is not None:
+            raise BadRequestException("本轮下注尚未结束，无法推进")
 
         next_rnd = next_round(hand.current_round)
         if next_rnd is None:
@@ -617,14 +706,20 @@ class HandEngine:
             self._calculate_pots_for_hand(hand)
         else:
             # Post-flop: SB 先行动 (庄家后第一个活跃玩家)
-            all_players = get_active_seated_players(self.db, hand.room_id)
+            # 只看本手参与者 (hole_cards key)，中途入座者不算
+            all_players = self._get_hand_participants(hand)
             folded_ids = {
                 b.player_id for b in self.db.query(Bet)
                 .filter(Bet.hand_id == hand.id, Bet.action == "fold")
                 .all()
             }
-            # 可操作玩家: 非 fold 且 chip_count > 0
-            actionable = [p for p in all_players if p.id not in folded_ids and p.chip_count > 0]
+            # 可操作玩家: 未 fold + 在座 + chip_count > 0 (已离局者视同无行动能力)
+            actionable = [
+                p for p in all_players
+                if p.id not in folded_ids
+                and p.is_active == 1 and p.seat_number >= 0
+                and p.chip_count > 0
+            ]
 
             if not actionable:
                 # 所有人都 all-in 或 fold，直接跳到 showdown
@@ -663,10 +758,11 @@ class HandEngine:
                 dealer = self.db.query(RoomPlayer).filter(RoomPlayer.id == hand.dealer_player_id).first()
                 dealer_seat = dealer.seat_number if dealer else 0
                 action_order = get_action_order(seat_numbers, dealer_seat, next_rnd)
-                # 找第一个未 fold 且未 all-in 的玩家
+                # 找第一个可操作的玩家 (未 fold + 在座 + 未 all-in)
+                actionable_ids = {p.id for p in actionable}
                 for seat in action_order:
                     p = self._find_player_by_seat(all_players, seat)
-                    if p.id not in folded_ids and p.chip_count > 0:
+                    if p.id in actionable_ids:
                         hand.turn_player_id = p.id
                         break
                 else:
@@ -697,14 +793,23 @@ class HandEngine:
             winner_ids = r["winner_ids"]
             total_won = r.get("amount", 0)
             is_split = len(winner_ids) > 1
-            share = total_won // len(winner_ids) if is_split else total_won
+            share = total_won // len(winner_ids) if winner_ids else 0
+            remainder = total_won - share * len(winner_ids)
+
+            # 平分余数: 按 (座位号 - 庄位) % max_seats 升序，靠前的赢家各多分 1，
+            # 保证 Σ 分配 == 池额 (余数筹码不蒸发)
+            bonus_ids = set()
+            if remainder:
+                ordered = self._winners_by_dealer_distance(hand, winner_ids)
+                bonus_ids = set(ordered[:remainder])
 
             for wid in winner_ids:
+                amount_won = share + (1 if wid in bonus_ids else 0)
                 hr = HandResult(
                     hand_id=hand.id,
                     pot_id=pot_id,
                     winner_id=wid,
-                    amount_won=share,
+                    amount_won=amount_won,
                     is_split=1 if is_split else 0,
                 )
                 self.db.add(hr)
@@ -713,7 +818,7 @@ class HandEngine:
                 # 给赢家加铃钱
                 winner = self.db.query(RoomPlayer).filter(RoomPlayer.id == wid).first()
                 if winner:
-                    winner.chip_count += share
+                    winner.chip_count += amount_won
 
         hand.status = "settled"
         from datetime import datetime, timezone
@@ -723,22 +828,44 @@ class HandEngine:
 
         return hand_results
 
+    def _winners_by_dealer_distance(self, hand: Hand, winner_ids: list[int]) -> list[int]:
+        """按 (座位号 - 庄家座位) % max_seats 升序排列赢家
+
+        用于平分池余数分配: 庄家位左侧顺时针最近的赢家优先。
+        """
+        dealer = self.db.query(RoomPlayer).filter(RoomPlayer.id == hand.dealer_player_id).first()
+        dealer_seat = dealer.seat_number if dealer else 0
+        max_seats = self.room.max_players or 9
+        seat_map = {
+            p.id: p.seat_number
+            for p in self.db.query(RoomPlayer).filter(RoomPlayer.id.in_(winner_ids)).all()
+        }
+        return sorted(winner_ids, key=lambda wid: (seat_map.get(wid, 0) - dealer_seat) % max_seats)
+
     def _auto_determine_winners(self, hand: Hand) -> list[dict]:
         """自动确定赢家（showdown 自动评估牌力，或中途 fold 只剩一人）"""
         pots = self.db.query(Pot).filter(Pot.hand_id == hand.id).all()
         all_bets = self.db.query(Bet).filter(Bet.hand_id == hand.id).all()
         folded_ids = {b.player_id for b in all_bets if b.action == "fold"}
 
-        # 获取所有入座玩家
-        seated_players = (
-            self.db.query(RoomPlayer)
-            .filter(RoomPlayer.room_id == self.room.id, RoomPlayer.is_active == 1, RoomPlayer.seat_number >= 0)
-            .all()
-        )
-        alive_ids = [p.id for p in seated_players if p.id not in folded_ids]
+        # 存活玩家 = 本手参与者 (hole_cards key) 中未 fold 者。
+        # 已离局 (is_active=0) 但未 fold 的参与者牌仍有效，照常计入；
+        # 中途入座者不是参与者，绝不计入。
+        alive_ids = [
+            p.id for p in self._get_hand_participants(hand)
+            if p.id not in folded_ids
+        ]
 
         if not alive_ids:
-            alive_ids = [seated_players[0].id] if seated_players else []
+            # 兜底 (无参与者信息的数据): 回退到未 fold 的下注者
+            bettor_ids = []
+            for b in all_bets:
+                if b.player_id not in folded_ids and b.player_id not in bettor_ids:
+                    bettor_ids.append(b.player_id)
+            alive_ids = bettor_ids
+
+        if not alive_ids:
+            alive_ids = [all_bets[0].player_id] if all_bets else []
 
         community = cards_from_json(hand.community_cards) if hand.community_cards else []
         hole_cards_data = json.loads(hand.hole_cards) if hand.hole_cards else {}
@@ -748,25 +875,7 @@ class HandEngine:
             # 始终比较所有存活玩家 (revealed_players 仅用于前端展示)
             compare_ids = alive_ids
 
-            # 如果只有 1 个亮牌玩家，直接获胜
-            if len(compare_ids) == 1:
-                results = []
-                for pot in pots:
-                    eligible_str = pot.eligible_player_ids or ""
-                    eligible = [int(x) for x in eligible_str.split(",") if x]
-                    if compare_ids[0] in eligible:
-                        winner_ids = compare_ids
-                    else:
-                        pot_alive = [pid for pid in compare_ids if pid in eligible]
-                        winner_ids = pot_alive if pot_alive else compare_ids
-                    results.append({
-                        "pot_id": pot.id,
-                        "winner_ids": winner_ids,
-                        "amount": pot.amount,
-                    })
-                return results
-
-            # 多个亮牌玩家: 比较牌力
+            # 多个存活玩家: 比较牌力
             # 构建每个亮牌玩家的手牌
             player_scores = {}
             for pid in compare_ids:
@@ -819,12 +928,8 @@ class HandEngine:
         all_bets = self.db.query(Bet).filter(Bet.hand_id == hand.id).all()
         folded_ids = {b.player_id for b in all_bets if b.action == "fold"}
 
-        seated_players = (
-            self.db.query(RoomPlayer)
-            .filter(RoomPlayer.room_id == self.room.id, RoomPlayer.is_active == 1, RoomPlayer.seat_number >= 0)
-            .all()
-        )
-        alive = [p for p in seated_players if p.id not in folded_ids]
+        # 存活玩家 = 本手参与者中未 fold 者 (含已离局但未 fold 的参与者)
+        alive = [p for p in self._get_hand_participants(hand) if p.id not in folded_ids]
 
         evaluations = {}
         if len(community) >= 3:
@@ -863,10 +968,12 @@ class HandEngine:
         计算一季的所有收获篮 (主收获篮 + 副收获篮)
 
         德州扑克边池规则:
-        1. 如果有玩家弃牌，存活玩家的有效投入上限 = 弃牌玩家中的最大投入
-           超出部分退还给对应存活玩家
-        2. 边池仅在 all-in 场景产生：某玩家筹码不够跟满，
+        1. 边池仅在投入不等时产生：某玩家筹码不够跟满 (all-in)，
            其投入金额以下的部分进入主池，以上部分进入边池
+        2. Uncalled bet 退款：仅当牌局因 fold 提前结束 (存活 ≤ 1 人) 时，
+           未 fold 的最高投入者超出"其他所有玩家 (含 fold 者) 最大投入"的
+           部分退还给本人；其余玩家 (含 fold 者) 的投入全额留在池内。
+           正常 showdown 路径不做任何 cap，直接用原始投入计算边池。
         """
         # 获取本季所有投入
         all_bets = self.db.query(Bet).filter(Bet.hand_id == hand.id).all()
@@ -881,26 +988,33 @@ class HandEngine:
             b.player_id for b in all_bets if b.action == "fold"
         }
 
-        # === Fold 退款：所有玩家的有效投入不超过 fold 者最大投入 ===
-        # 例: A(BB=100) fold, B all-in 10000
-        #   → B 的有效投入 cap 在 100, 退回 9900
-        # 修复: fold 玩家超过 max_folded_bet 的部分也需退款，防止筹码消失
+        # 存活玩家 = 本手参与者 (含下注者) 中未 fold 者
+        candidate_ids = self._get_hand_participant_ids(hand) | set(player_totals.keys())
+        alive_ids = candidate_ids - folded_ids
+
+        # === Uncalled bet 退款 ===
+        # 例: A(BB=100) fold, B all-in 10000 → B 超出 A 的 100 部分 (9900) 退回，
+        #     A 的 100 留在池内。只有存活 ≤1 人 (ended_by_fold) 时才存在未跟注。
         effective_bets = dict(player_totals)
-        if folded_ids:
-            max_folded_bet = max(
-                (player_totals.get(pid, 0) for pid in folded_ids),
-                default=0
-            )
-            for pid in list(effective_bets.keys()):
-                if effective_bets[pid] > max_folded_bet:
-                    refund = effective_bets[pid] - max_folded_bet
-                    # 退回多余筹码 (存活玩家和 fold 玩家均需 cap)
+        if hand.ended_by_fold or len(alive_ids) <= 1:
+            # 未 fold 的最高投入者
+            alive_totals = {pid: player_totals.get(pid, 0) for pid in alive_ids}
+            if alive_totals:
+                top_pid = max(alive_totals, key=lambda pid: alive_totals[pid])
+                top_total = alive_totals[top_pid]
+                # 其他所有玩家 (含 fold 者) 的最大投入
+                others_max = max(
+                    (player_totals.get(pid, 0) for pid in candidate_ids if pid != top_pid),
+                    default=0,
+                )
+                if top_total > others_max:
+                    refund = top_total - others_max
                     player = self.db.query(RoomPlayer).filter(
-                        RoomPlayer.id == pid
+                        RoomPlayer.id == top_pid
                     ).first()
                     if player:
                         player.chip_count += refund
-                    effective_bets[pid] = max_folded_bet
+                    effective_bets[top_pid] = others_max
                     hand.pot_total -= refund
 
         # 用有效投入计算收获篮

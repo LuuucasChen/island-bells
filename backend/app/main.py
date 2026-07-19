@@ -1,4 +1,4 @@
-"""岛屿铃钱记 — FastAPI 应用入口"""
+1
 
 import asyncio
 import logging
@@ -17,14 +17,15 @@ from app.utils import activity_tracker
 from app.models import User, Room, RoomPlayer, Hand, Bet, Pot, HandResult, Rebuy  # noqa: F401
 
 
-# 死牌局阈值：5 分钟无玩家下注行动则自动结束房间
-DEAD_ROOM_TIMEOUT = timedelta(minutes=5)
+# 死牌局阈值：30 分钟无玩家游戏行动/聊天则自动结束房间
+# (休闲局节奏慢，5 分钟会在玩家仅聊天/思考时误杀进行中的牌局)
+DEAD_ROOM_TIMEOUT = timedelta(minutes=30)
 # 清理扫描间隔
 DEAD_ROOM_SCAN_INTERVAL = 30  # 秒
 
 
 async def _dead_room_cleaner() -> None:
-    """后台任务：定期扫描活跃度表，自动结束超过 5 分钟无行动的牌局。"""
+    """后台任务：定期扫描活跃度表，自动结束超过 30 分钟无游戏行动/聊天的牌局。"""
     # 延迟导入避免循环依赖
     from app.api.v1.game import _finish_room_impl
 

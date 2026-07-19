@@ -30,10 +30,13 @@ export function CommunityCards({ cards, currentRound, revealing, onRevealComplet
   const previouslyVisibleRef = useRef(0)
 
   // 追踪 cards 变化：在 revealing 开始前记住已有几张牌
+  // 注意: ref 写入放在 useEffect 中，避免渲染期写 ref
   const prevCardsLenRef = useRef(cards.length)
-  if (!revealing) {
-    prevCardsLenRef.current = cards.length
-  }
+  useEffect(() => {
+    if (!revealing) {
+      prevCardsLenRef.current = cards.length
+    }
+  }, [revealing, cards.length])
 
   useEffect(() => {
     if (!revealing) {

@@ -1,17 +1,21 @@
 """岛屿铃钱记 — 房间(岛屿) API"""
 
+import json
 import random
 import string
+from datetime import datetime, timezone
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.database import get_db
 from app.dependencies import get_current_user
-from app.models import User, Room, RoomPlayer
+from app.models import User, Room, RoomPlayer, Hand, Bet
 from app.utils import BadRequestException, ForbiddenException, NotFoundException, ConflictException
+from app.utils import activity_tracker
 from app.api.ws.game_ws import manager as ws_manager
 from app.utils.animal_names import get_random_island_name, get_random_character_name
+from app.engine.hand_engine import HandEngine
 
 router = APIRouter()
 
@@ -22,12 +26,101 @@ def _generate_room_code(length: int = 6) -> str:
     return "".join(random.choices(chars, k=length))
 
 
+def _get_unsettled_hand(db: Session, room_id: int) -> Hand | None:
+    """获取房间当前未结算的手牌 (betting/settling)，无则返回 None"""
+    return (
+        db.query(Hand)
+        .filter(Hand.room_id == room_id, Hand.status.in_(["betting", "settling"]))
+        .order_by(Hand.hand_number.desc())
+        .first()
+    )
+
+
+def _auto_fold_current_hand(db: Session, room: Room, player: RoomPlayer) -> dict | None:
+    """若玩家是当前下注中手牌的未 fold 参与者，自动为其补一条 fold 行动。
+
+    与 /rooms/{id}/action 的 fold 路径一致: 写 Bet(fold) → 推进 turn →
+    触发 auto_end 检查 → 本轮结束则自动推进阶段。
+    返回 {"hand", "bet", "advanced", "auto_ended"}；无需 fold 时返回 None。
+    """
+    hand = _get_unsettled_hand(db, room.id)
+    if hand is None or hand.status != "betting":
+        return None  # settling 阶段下注已结束，无需 fold
+
+    hole = json.loads(hand.hole_cards) if hand.hole_cards else {}
+    if str(player.id) not in hole:
+        return None  # 非本手参与者
+
+    folded_ids = {
+        b.player_id for b in db.query(Bet)
+        .filter(Bet.hand_id == hand.id, Bet.action == "fold")
+        .all()
+    }
+    if player.id in folded_ids:
+        return None  # 已 fold
+
+    # 补一条 fold 行动
+    bet = Bet(
+        hand_id=hand.id,
+        player_id=player.id,
+        round=hand.current_round,
+        action="fold",
+        amount=0,
+    )
+    db.add(bet)
+    db.flush()
+
+    engine = HandEngine(db, room)
+    # 只有轮到该玩家行动时才需要推进 turn；否则 turn 仍指向其他玩家，牌局继续
+    if hand.turn_player_id == player.id:
+        engine._advance_turn(hand, player, "fold", 0)
+    engine._check_auto_end(hand)
+    db.flush()
+    db.refresh(hand)
+
+    # 本轮下注全部完成则自动推进阶段 (与 /action 的 fold 路径一致)
+    advanced = False
+    if hand.turn_player_id is None and hand.status == "betting":
+        engine.advance_round(hand)
+        db.refresh(hand)
+        advanced = True
+
+    auto_ended = hand.status == "settling" and not advanced
+
+    # 自动 fold 属于游戏状态变更，重置死牌局倒计时
+    activity_tracker.touch(room.id)
+
+    return {"hand": hand, "bet": bet, "advanced": advanced, "auto_ended": auto_ended}
+
+
+async def _broadcast_auto_fold(room_id: int, fold_info: dict) -> None:
+    """自动 fold 后广播牌局变化 (与 /action 的广播口径一致)"""
+    hand = fold_info["hand"]
+    ws_data = {
+        "hand_id": hand.id,
+        "player_id": fold_info["bet"].player_id,
+        "action": "fold",
+        "amount": 0,
+        "pot_total": hand.pot_total,
+        "current_round": hand.current_round,
+        "status": hand.status,
+        "turn_player_id": hand.turn_player_id,
+    }
+    if fold_info["advanced"] or fold_info["auto_ended"]:
+        ws_data["community_cards"] = json.loads(hand.community_cards) if hand.community_cards else []
+        ws_data["ended_by_fold"] = bool(hand.ended_by_fold)
+        ws_type = "round_advance"
+    else:
+        ws_type = "game_update"
+    await ws_manager.broadcast_to_room(room_id, {"type": ws_type, "data": ws_data})
+
+
 class CreateRoomRequest(BaseModel):
     name: str = ""
     nickname: str = ""
-    initial_chips: int = 10000
-    sb_amount: int = 25
-    bb_amount: int = 50
+    initial_chips: int = Field(10000, gt=0)
+    sb_amount: int = Field(25, gt=0)
+    bb_amount: int = Field(50, gt=0)
     max_players: int = 9
 
 
@@ -41,9 +134,9 @@ class SitRequest(BaseModel):
 
 class UpdateRoomRequest(BaseModel):
     name: str | None = None
-    initial_chips: int | None = None
-    sb_amount: int | None = None
-    bb_amount: int | None = None
+    initial_chips: int | None = Field(None, gt=0)
+    sb_amount: int | None = Field(None, gt=0)
+    bb_amount: int | None = Field(None, gt=0)
     max_players: int | None = None
 
 
@@ -75,7 +168,7 @@ async def create_room(req: CreateRoomRequest, db: Session = Depends(get_db), cur
         initial_chips=req.initial_chips,
         sb_amount=req.sb_amount,
         bb_amount=req.bb_amount,
-        max_players=min(req.max_players, 9),
+        max_players=max(2, min(req.max_players, 9)),
     )
     db.add(room)
     db.commit()
@@ -137,8 +230,8 @@ async def get_room(room_code: str, db: Session = Depends(get_db)):
 
 
 @router.post("/{room_code}/join")
-async def join_room(room_code: str, req: JoinRoomRequest, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    """加入岛屿"""
+async def join_room(room_code: str, req: JoinRoomRequest | None = None, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    """加入岛屿 (body 可省略，昵称缺省自动生成)"""
     room = db.query(Room).filter(Room.room_code == room_code).first()
     if room is None:
         raise NotFoundException("岛屿不存在")
@@ -146,14 +239,30 @@ async def join_room(room_code: str, req: JoinRoomRequest, db: Session = Depends(
     if room.status == "finished":
         raise BadRequestException("岛屿已结束")
 
-    # 检查是否已在房间
+    # 检查是否已有房间记录 (含已离岛 is_active=0)
     existing = db.query(RoomPlayer).filter(
         RoomPlayer.room_id == room.id,
         RoomPlayer.user_id == current_user.id,
-        RoomPlayer.is_active == 1,
     ).first()
-    if existing:
+
+    if existing and existing.is_active == 1:
         raise ConflictException("你已经在这个岛屿上")
+
+    if existing:
+        # 离岛后重进: 复用原行恢复 is_active，不新建行、不双份买入
+        existing.is_active = 1
+        existing.left_at = None
+        db.commit()
+
+        await ws_manager.broadcast_to_room(room.id, {
+            "type": "player_joined",
+            "data": {
+                "user_id": current_user.id,
+                "nickname": current_user.nickname,
+                "player_id": existing.id,
+            },
+        })
+        return {"player_id": existing.id, "room_id": room.id}
 
     # 检查人数
     active_count = db.query(RoomPlayer).filter(RoomPlayer.room_id == room.id, RoomPlayer.is_active == 1).count()
@@ -170,8 +279,8 @@ async def join_room(room_code: str, req: JoinRoomRequest, db: Session = Depends(
         if user and user.nickname:
             used_names.append(user.nickname)
 
-    if req.nickname:
-        nickname = req.nickname
+    nickname = req.nickname if req else ""
+    if nickname:
         if nickname in used_names:
             raise BadRequestException(f"昵称 '{nickname}' 在该岛屿已被使用")
     else:
@@ -206,8 +315,6 @@ async def join_room(room_code: str, req: JoinRoomRequest, db: Session = Depends(
 @router.delete("/{room_id}/leave")
 async def leave_room(room_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     """离开岛屿"""
-    from datetime import datetime, timezone
-
     player = db.query(RoomPlayer).filter(
         RoomPlayer.room_id == room_id,
         RoomPlayer.user_id == current_user.id,
@@ -216,9 +323,35 @@ async def leave_room(room_id: int, db: Session = Depends(get_db), current_user: 
     if player is None:
         raise NotFoundException("你不在这个岛屿上")
 
+    room = db.query(Room).filter(Room.id == room_id).first()
+
+    # 当前未结算手牌的未 fold 参与者: 先自动 fold，避免轮空死锁
+    fold_info = _auto_fold_current_hand(db, room, player) if room else None
+
     player.is_active = 0
     player.left_at = datetime.now(timezone.utc)
+    player.seat_number = -1
+
+    # 岛主离岛: 房主迁移给最早加入的其他活跃成员，
+    # 否则结算/开新局/结束游戏全部卡死 (这些操作仅岛主可做)
+    if room and room.owner_id == current_user.id and room.status != "finished":
+        successor = (
+            db.query(RoomPlayer)
+            .filter(
+                RoomPlayer.room_id == room_id,
+                RoomPlayer.is_active == 1,
+                RoomPlayer.id != player.id,
+            )
+            .order_by(RoomPlayer.joined_at, RoomPlayer.id)
+            .first()
+        )
+        if successor:
+            room.owner_id = successor.user_id
+
     db.commit()
+
+    if fold_info:
+        await _broadcast_auto_fold(room_id, fold_info)
 
     return {"message": "已离岛"}
 
@@ -237,6 +370,11 @@ async def sit_down(room_id: int, req: SitRequest, db: Session = Depends(get_db),
     if not (0 <= req.seat_number <= 8):
         raise BadRequestException("座位号无效 (0-8)")
 
+    # 牌局进行中 (存在未结算手牌) 不允许中途入座，等下一局开始前再入座
+    room = db.query(Room).filter(Room.id == room_id).first()
+    if room and room.status == "playing" and _get_unsettled_hand(db, room_id) is not None:
+        raise BadRequestException("牌局进行中，请等下一局开始前再入座")
+
     # 检查座位是否被占
     occupied = db.query(RoomPlayer).filter(
         RoomPlayer.room_id == room_id,
@@ -248,6 +386,9 @@ async def sit_down(room_id: int, req: SitRequest, db: Session = Depends(get_db),
 
     player.seat_number = req.seat_number
     db.commit()
+
+    # 入座属于活跃事件，重置死牌局倒计时
+    activity_tracker.touch(room_id)
 
     # 广播玩家入座
     await ws_manager.broadcast_to_room(room_id, {
@@ -275,12 +416,17 @@ async def stand_up(room_id: int, db: Session = Depends(get_db), current_user: Us
     if player is None:
         raise NotFoundException("你不在这个岛屿上")
 
-    # 游戏进行中: 仅允许铃钱耗尽的玩家离岛
-    if room and room.status == "playing" and player.chip_count > 0:
-        raise BadRequestException("游戏进行中不能离岛")
+    # 当前未结算手牌的未 fold 参与者 (含 all-in): 先自动 fold，再站起
+    fold_info = _auto_fold_current_hand(db, room, player) if room else None
 
     player.seat_number = -1
     db.commit()
+
+    # 站起属于活跃事件，重置死牌局倒计时
+    activity_tracker.touch(room_id)
+
+    if fold_info:
+        await _broadcast_auto_fold(room_id, fold_info)
 
     return {"message": "已站起"}
 
@@ -301,13 +447,22 @@ async def update_room(room_id: int, req: UpdateRoomRequest, db: Session = Depend
     if req.name is not None:
         room.name = req.name
     if req.initial_chips is not None:
+        # 已有玩家加入后禁止修改初始铃钱，避免结算基准失真
+        has_players = db.query(RoomPlayer).filter(RoomPlayer.room_id == room_id).first() is not None
+        if has_players:
+            raise BadRequestException("已有居民加入，无法修改初始铃钱")
         room.initial_chips = req.initial_chips
     if req.sb_amount is not None:
         room.sb_amount = req.sb_amount
     if req.bb_amount is not None:
         room.bb_amount = req.bb_amount
     if req.max_players is not None:
-        room.max_players = min(req.max_players, 9)
+        room.max_players = max(2, min(req.max_players, 9))
+
+    # 仅在盲注实际被修改时校验配比，避免校验引入前创建的旧房间连改名都被拒
+    if req.sb_amount is not None or req.bb_amount is not None:
+        if room.bb_amount < room.sb_amount * 2:
+            raise BadRequestException("大树费必须至少是树苗费的2倍")
 
     db.commit()
 

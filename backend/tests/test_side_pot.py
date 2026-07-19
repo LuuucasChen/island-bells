@@ -275,22 +275,22 @@ class TestCalculatePotsForHand:
 
     def test_fold_three_players_one_folds(self, db):
         """
-        3人局: A all-in 500 fold, B bet 1000, C bet 1000
-        
-        预期:
-        - B 退 500, C 退 500
-        - 主池: 500×3 = 1500
-        - 无副池 (B 和 C 被 cap 到 500)
+        3人局: A(500) fold, B(1000), C(1000) — B/C 存活到 showdown
+
+        正确规则: showdown 路径不做 cap/退款。
+        - B/C 全额入池，A(fold) 的 500 留在池内但不参与 eligible
+        - 主池: 500×3 = 1500 (B,C eligible)
+        - 副池: (1000-500)×2 = 1000 (B,C eligible)
         """
         room, players = _make_room_with_players(db, num_players=3, chips=10000, sb=50, bb=100)
 
         hand = self._create_hand_with_bets(db, players, [
             (0, "blind", 50),
             (1, "blind", 100),
-            (0, "raise", 450),      # A: total=500, all-in
+            (0, "raise", 450),      # A: total=500
             (1, "call", 900),       # B: total=1000
             (2, "call", 1000),      # C: total=1000
-            (0, "fold", 0),         # A: fold (后续 fold)
+            (0, "fold", 0),         # A: fold
         ])
 
         # A: 10000-50-450 = 9500
@@ -304,16 +304,25 @@ class TestCalculatePotsForHand:
         engine._calculate_pots_for_hand(hand)
         db.flush()
 
-        # B 退 500: 9000 + 500 = 9500
-        assert players[1].chip_count == 9500
-        # C 退 500: 9000 + 500 = 9500
-        assert players[2].chip_count == 9500
-        # A 不变
+        # 无人退款 (showdown 不 cap)
         assert players[0].chip_count == 9500
+        assert players[1].chip_count == 9000
+        assert players[2].chip_count == 9000
 
         pots = db.query(Pot).filter(Pot.hand_id == hand.id).all()
-        assert len(pots) == 1, f"应只有 1 个池, 实际有 {len(pots)}"
+        assert len(pots) == 2, f"应有 2 个池, 实际有 {len(pots)}"
+        assert pots[0].pot_type == "main"
         assert pots[0].amount == 1500  # 500×3
+        assert pots[1].pot_type == "side"
+        assert pots[1].amount == 1000  # 500×2
+        # A(fold) 不在任何池的 eligible 中，B/C 均在
+        for pot in pots:
+            eligible = [int(x) for x in pot.eligible_player_ids.split(",") if x]
+            assert players[0].id not in eligible
+            assert players[1].id in eligible
+            assert players[2].id in eligible
+        # 总池 = 1500 + 1000 = 2500 = A(500) + B(1000) + C(1000)
+        assert sum(p.amount for p in pots) == 2500
 
     def test_no_fold_allin_side_pot(self, db):
         """
@@ -784,12 +793,12 @@ class TestCalculatePotsForHandAdvanced:
 
     def test_fold_refund_with_side_pot_remaining(self, db):
         """
-        4人局: A(500) fold, B(1000), C(1000), D(2000)
-        
-        预期:
-        - A fold, max_folded_bet = 500
-        - B 退 500 (1000→500), C 退 500, D 退 1500
-        - 主池: 500×4 = 2000
+        4人局: A(500) fold, B(1000), C(1000), D(2000) — B/C/D 存活到 showdown
+
+        正确规则: showdown 路径不做 cap/退款。
+        - 主池: 500×4 = 2000 (B,C,D eligible)
+        - 副池1: (1000-500)×3 = 1500 (B,C,D eligible)
+        - 副池2: (2000-1000)×1 = 1000 (仅 D eligible)
         """
         room, players = _make_room_with_players(db, num_players=4, chips=10000)
 
@@ -808,19 +817,26 @@ class TestCalculatePotsForHandAdvanced:
         engine._calculate_pots_for_hand(hand)
         db.flush()
 
-        # B 退 500
-        assert players[1].chip_count == chips_before[players[1].id] + 500
-        # C 退 500
-        assert players[2].chip_count == chips_before[players[2].id] + 500
-        # D 退 1500
-        assert players[3].chip_count == chips_before[players[3].id] + 1500
-        # A 不变
-        assert players[0].chip_count == chips_before[players[0].id]
+        # 无人退款 (showdown 不 cap)
+        for p in players:
+            assert p.chip_count == chips_before[p.id], \
+                f"玩家 {p.id} 不应退款, 实际 {p.chip_count}"
 
         pots = db.query(Pot).filter(Pot.hand_id == hand.id).all()
-        assert len(pots) == 1
-        assert pots[0].amount == 2000  # 500×4
+        assert len(pots) == 3
         assert pots[0].pot_type == "main"
+        assert pots[0].amount == 2000  # 500×4
+        assert pots[1].pot_type == "side"
+        assert pots[1].amount == 1500  # 500×3
+        assert pots[2].pot_type == "side"
+        assert pots[2].amount == 1000  # 1000×1
+        # A(fold) 不在 eligible; 副池2 仅 D
+        main_eligible = [int(x) for x in pots[0].eligible_player_ids.split(",") if x]
+        assert players[0].id not in main_eligible
+        side2_eligible = [int(x) for x in pots[2].eligible_player_ids.split(",") if x]
+        assert side2_eligible == [players[3].id]
+        # 总池 = 4500 = 500+1000+1000+2000
+        assert sum(p.amount for p in pots) == 4500
 
     def test_two_folds_different_amounts(self, db):
         """
@@ -1248,13 +1264,12 @@ class TestSettleDistribution:
 
     def test_fold_refund_multiple_survivors(self, db):
         """
-        4人: A(200) fold, B(1000), C(1000), D(1000)
-        
-        预期:
-        - max_folded = 200
-        - B/C/D 各退 800
-        - 主池: 200×4 = 800
-        - B 赢主池
+        4人: A(200) fold, B(1000), C(1000), D(1000) — B/C/D 存活到 showdown
+
+        正确规则: showdown 路径不做 cap/退款。
+        - 主池: 200×4 = 800 (B,C,D eligible)
+        - 副池: (1000-200)×3 = 2400 (B,C,D eligible)
+        - 每个池分给第一个 eligible (B)
         """
         players, hand, results, chips_after_refund = self._setup_and_settle(
             db, num_players=4, chips=10000,
@@ -1271,16 +1286,17 @@ class TestSettleDistribution:
         db.flush()
 
         pots = db.query(Pot).filter(Pot.hand_id == hand.id).all()
-        assert len(pots) == 1
-        assert pots[0].amount == 800  # 200×4
+        assert len(pots) == 2
+        assert pots[0].amount == 800   # 200×4
+        assert pots[1].amount == 2400  # 800×3
 
-        # B 退了 800 + 赢了 800 = net 0 变化 from after refund
-        # B: 10000-1000+800(refund)+800(win) = 10600
-        assert players[1].chip_count == 10600, f"B 应为 10600, 实际 {players[1].chip_count}"
-        # C: 10000-1000+800(refund) = 9800
-        assert players[2].chip_count == 9800
-        # D: 10000-1000+800(refund) = 9800
-        assert players[3].chip_count == 9800
+        # B 赢主池 800 + 副池 2400
+        # B: 10000-1000+800+2400 = 12200
+        assert players[1].chip_count == 12200, f"B 应为 12200, 实际 {players[1].chip_count}"
+        # C: 10000-1000 = 9000 (无退款)
+        assert players[2].chip_count == 9000
+        # D: 10000-1000 = 9000 (无退款)
+        assert players[3].chip_count == 9000
         # A: 10000-200 = 9800
         assert players[0].chip_count == 9800
         # 守恒

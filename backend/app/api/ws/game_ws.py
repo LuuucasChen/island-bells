@@ -6,6 +6,9 @@ import logging
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query
 from typing import Dict, Set
 
+from app.database import SessionLocal
+from app.models import RoomPlayer
+from app.utils import activity_tracker
 from app.utils.security import decode_token
 
 logger = logging.getLogger(__name__)
@@ -82,7 +85,28 @@ def authenticate_ws(token: str) -> int | None:
     user_id = payload.get("sub")
     if user_id is None:
         return None
-    return int(user_id)
+    try:
+        return int(user_id)
+    except (TypeError, ValueError):
+        return None
+
+
+def _is_room_member(room_id: int, user_id: int) -> bool:
+    """校验用户是否是房间活跃成员 (is_active=1 的 RoomPlayer 行)"""
+    db = SessionLocal()
+    try:
+        return (
+            db.query(RoomPlayer)
+            .filter(
+                RoomPlayer.room_id == room_id,
+                RoomPlayer.user_id == user_id,
+                RoomPlayer.is_active == 1,
+            )
+            .first()
+            is not None
+        )
+    finally:
+        db.close()
 
 
 @router.websocket("/ws/rooms/{room_id}")
@@ -91,6 +115,11 @@ async def ws_game(websocket: WebSocket, room_id: int, token: str = Query(...)):
     user_id = authenticate_ws(token)
     if user_id is None:
         await websocket.close(code=4001, reason="认证失败")
+        return
+
+    # 房间成员鉴权: 非成员拒绝连接
+    if not _is_room_member(room_id, user_id):
+        await websocket.close(code=4003, reason="非房间成员")
         return
 
     await manager.connect(websocket, room_id, user_id)
@@ -111,6 +140,10 @@ async def ws_game(websocket: WebSocket, room_id: int, token: str = Query(...)):
                 )
             except asyncio.TimeoutError:
                 logger.info("ws heartbeat timeout, closing connection for user %s in room %s", user_id, room_id)
+                try:
+                    await websocket.close(code=1001, reason="心跳超时")
+                except Exception:
+                    pass
                 break
 
             try:
@@ -122,6 +155,8 @@ async def ws_game(websocket: WebSocket, room_id: int, token: str = Query(...)):
 
             # 聊天消息
             if msg_type == "chat":
+                # 聊天属于玩家活跃行为，重置死牌局倒计时 (心跳不算，防止挂着的页面续命)
+                activity_tracker.touch(room_id)
                 await manager.broadcast_to_room(room_id, {
                     "type": "chat",
                     "user_id": user_id,

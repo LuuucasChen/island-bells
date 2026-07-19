@@ -27,6 +27,16 @@ function GameTable() {
   // Showdown orchestration state
   const [showdownPhase, setShowdownPhase] = useState<ShowdownPhase>('idle')
   const autoSettleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // 用 ref 镜像 showdownPhase，轮询/异步回调内读 ref，消除 stale closure
+  const showdownPhaseRef = useRef<ShowdownPhase>('idle')
+  // 标记「挂载后首次加载就发现已 settling/settled」(刷新进入):
+  // 只有这种情况 busted 时才允许自动跳过结算弹窗；正常打完一局必须先展示弹窗
+  const settledOnMountRef = useRef(false)
+  const firstLoadDoneRef = useRef(false)
+
+  useEffect(() => {
+    showdownPhaseRef.current = showdownPhase
+  }, [showdownPhase])
 
   const loadGame = async () => {
     if (!roomId) return
@@ -35,12 +45,16 @@ function GameTable() {
       // 如果加载时已经是 settling/settled (刷新页面场景)，且当前没有翻牌动画在进行，跳过翻牌
       const h = useGameStore.getState().currentHand
       const isRevealing = useGameStore.getState().showdownReveal
-      if (h && (h.status === 'settling' || h.status === 'settled') && showdownPhase === 'idle' && !isRevealing) {
+      if (h && (h.status === 'settling' || h.status === 'settled') && showdownPhaseRef.current === 'idle' && !isRevealing) {
         setShowdownPhase('settled')
+        if (!firstLoadDoneRef.current) {
+          settledOnMountRef.current = true
+        }
       }
     } catch {
       // ignore
     }
+    firstLoadDoneRef.current = true
   }
 
   useEffect(() => {
@@ -137,13 +151,10 @@ function GameTable() {
     }
   }
 
-  const handleShowCards = async () => {
-    // fold 局赢家选择展示手牌 → 调 reveal API，不直接调 /settle
-    try {
-      await api.post(`/rooms/${roomId}/reveal`, { action: 'show' })
-      await loadGame()
-    } catch { /* ignore */ }
-    // BUG-3 修复: 统一由 auto_settling useEffect 处理结算
+  const handleShowCards = () => {
+    // fold 局赢家选择「展示手牌」: 后端对 ended_by_fold 牌局拒绝 reveal (400)；
+    // 赢家未 muck 时其手牌本就在 all_hole_cards 中返回 (未 muck 即展示)，
+    // 因此不调任何 API，直接进入统一结算流程
     setShowdownPhase('auto_settling')
   }
 
@@ -213,6 +224,7 @@ function GameTable() {
     if (hand?.status === 'betting' || game.roomStatus === 'waiting') {
       setShowdownPhase('idle')
       setShowdownDismissed(false)
+      settledOnMountRef.current = false
     }
   }, [hand?.hand_id])
 
@@ -230,7 +242,9 @@ function GameTable() {
   const myChips = myPlayer?.chip_count || 0
   const currentMaxBet = Math.max(...players.map((p) => p.bet_this_round), 0)
   const toCall = Math.max(currentMaxBet - myBetThisRound, 0)
-  const minLegalRaise = Math.max(currentMaxBet + bbAmount - myBetThisRound, bbAmount)
+  // 最小加注增量以服务端口径为准 (最后一次加注的增量，可能远大于 BB)；未返回时回退 BB
+  const minRaise = hand?.min_raise || bbAmount
+  const minLegalRaise = Math.max(currentMaxBet + minRaise - myBetThisRound, minRaise)
   const quickAmounts = [minLegalRaise, minLegalRaise * 2, minLegalRaise * 5].filter(
     (amt, i, arr) => arr.indexOf(amt) === i && amt <= myChips
   )
@@ -309,15 +323,18 @@ function GameTable() {
   const [rebuyCountdown, setRebuyCountdown] = useState(10)
   const rebuyTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
-  // 刷新页面时如果已经是 settled + busted，直接跳过结算弹窗
+  // 仅「刷新进入」(挂载后首次加载就发现已 settled) 且 busted 时，直接跳过结算弹窗；
+  // 正常打完一局进入 settled 时不自动跳过 —— 先展示 ShowdownModal，
+  // 由用户点击「查看完毕」关闭后才进入 busted/补给流程
   useEffect(() => {
-    if (showdownPhase === 'settled' && myPlayer && myPlayer.chip_count <= 0 && !showdownDismissed) {
+    if (showdownPhase === 'settled' && myPlayer && myPlayer.chip_count <= 0 && !showdownDismissed
+      && settledOnMountRef.current) {
       const h = useGameStore.getState().currentHand
       if (h?.status === 'settled') {
         setShowdownDismissed(true)
       }
     }
-  }, [showdownPhase])
+  }, [showdownPhase, myPlayer, showdownDismissed, hand?.status])
 
   // 补给倒计时: 10秒内不选择则自动离岛
   useEffect(() => {
@@ -356,7 +373,9 @@ function GameTable() {
     if (rebuyTimerRef.current) { clearInterval(rebuyTimerRef.current); rebuyTimerRef.current = null }
     try {
       await api.post(`/rooms/${roomId}/stand`)
-      navigate(`/lobby/${game.roomCode}`)
+      // roomCode 可能为空 (刷新后 state 响应不含 room_code)，兜底回首页，避免 /lobby/ 无路由白屏
+      const code = useGameStore.getState().roomCode
+      navigate(code ? `/lobby/${code}` : '/')
     } catch (e) {
       alert('离岛失败: ' + (e as Error).message)
     }
@@ -402,12 +421,13 @@ function GameTable() {
 
   // 根据 evaluations 计算最佳牌型（赢家）
   // Bug fix: 使用完整 score 比较，而非仅比较 hand_type
-  const bestHandPlayerId = (() => {
-    if (!evaluations || Object.keys(evaluations).length === 0) return null
-    // 优先使用 results (结算后确定赢家)
+  // Bug fix: 平分底池时 settleResults 含多个赢家，聚合所有 winner_id 用于 🏆 徽章
+  const bestHandPlayerIds: Set<number> = (() => {
+    // 优先使用 results (结算后确定赢家，平分底池时含多个)
     if (game.settleResults && game.settleResults.length > 0) {
-      return game.settleResults[0].winner_id
+      return new Set(game.settleResults.map((r) => r.winner_id))
     }
+    if (!evaluations || Object.keys(evaluations).length === 0) return new Set<number>()
     let bestId: number | null = null
     let bestScore: number[] = []
     for (const [pid, ev] of Object.entries(evaluations)) {
@@ -428,7 +448,7 @@ function GameTable() {
         bestId = Number(pid)
       }
     }
-    return bestId
+    return new Set(bestId != null ? [bestId] : [])
   })()
 
   // 获取玩家操作记录 (用于展示 check 等动作)
@@ -547,7 +567,7 @@ function GameTable() {
                   players={players}
                   evaluations={evaluations}
                   inlineCards={showInlineCards ? (allHoleCards[String(player.player_id)] || null) : null}
-                  isBestHand={showInlineCards && player.player_id === bestHandPlayerId}
+                  isBestHand={showInlineCards && bestHandPlayerIds.has(player.player_id)}
                   lastAction={playerActions[player.player_id] || null}
                 />
               ))}
@@ -569,7 +589,7 @@ function GameTable() {
                   players={players}
                   evaluations={evaluations}
                   inlineCards={showInlineCards ? (allHoleCards[String(player.player_id)] || null) : null}
-                  isBestHand={showInlineCards && player.player_id === bestHandPlayerId}
+                  isBestHand={showInlineCards && bestHandPlayerIds.has(player.player_id)}
                   lastAction={playerActions[player.player_id] || null}
                 />
               ))}
@@ -604,7 +624,7 @@ function GameTable() {
                   players={players}
                   evaluations={evaluations}
                   inlineCards={showInlineCards ? (allHoleCards[String(player.player_id)] || null) : null}
-                  isBestHand={showInlineCards && player.player_id === bestHandPlayerId}
+                  isBestHand={showInlineCards && bestHandPlayerIds.has(player.player_id)}
                   lastAction={playerActions[player.player_id] || null}
                 />
               ))}
@@ -623,7 +643,7 @@ function GameTable() {
                 players={players}
                 evaluations={evaluations}
                 inlineCards={showInlineCards ? (allHoleCards[String(myPlayer.player_id)] || null) : null}
-                isBestHand={showInlineCards && myPlayer.player_id === bestHandPlayerId}
+                isBestHand={showInlineCards && bestHandPlayerIds.has(myPlayer.player_id)}
                 lastAction={playerActions[myPlayer.player_id] || null}
               />
             </div>
@@ -778,7 +798,8 @@ function GameTable() {
             <div className="quick-amounts">
               {toCall > 0 ? (
                 <button className="quick-chip quick-chip-call" onClick={() => handleAction('call')}>
-                  call {formatBells(toCall)}
+                  {/* 跟注额超过全部筹码时按 all-in 口径显示，与后端 min(toCall, chips) 扣款一致 */}
+                  {toCall >= myChips ? `All-in ${formatBells(myChips)}` : `call ${formatBells(toCall)}`}
                 </button>
               ) : (
                 <button className="quick-chip quick-chip-check" onClick={() => handleAction('check')}>

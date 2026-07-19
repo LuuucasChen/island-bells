@@ -55,8 +55,16 @@ async def get_hand_detail(hand_id: int, db: Session = Depends(get_db), current_u
 
     room = db.query(Room).filter(Room.id == hand.room_id).first()
 
-    # 获取所有投入
-    bets = db.query(Bet).filter(Bet.hand_id == hand_id).order_by(Bet.created_at).all()
+    # 成员校验: 仅本岛屿成员 (含曾经加入过的，按 RoomPlayer 行存在即可) 可查看
+    member = db.query(RoomPlayer).filter(
+        RoomPlayer.room_id == hand.room_id,
+        RoomPlayer.user_id == current_user.id,
+    ).first()
+    if member is None:
+        raise NotFoundException("季节不存在")
+
+    # 获取所有投入 (按自增 id 排序 = 真实时间序; created_at 是秒级，同秒多次下注会乱序)
+    bets = db.query(Bet).filter(Bet.hand_id == hand_id).order_by(Bet.id).all()
 
     # 获取收获篮
     pots = db.query(Pot).filter(Pot.hand_id == hand_id).all()
@@ -68,7 +76,7 @@ async def get_hand_detail(hand_id: int, db: Session = Depends(get_db), current_u
     community_cards = json.loads(hand.community_cards) if hand.community_cards else []
 
     # 所有人手牌（key 为 player_id 字符串）
-    hole_cards: dict = json.loads(hand.hole_cards) if hand.hole_cards else {}
+    hole_cards_all: dict = json.loads(hand.hole_cards) if hand.hole_cards else {}
 
     # 玩家列表（与当前 game.py /state 结构保持一致）
     players = db.query(RoomPlayer).filter(
@@ -76,6 +84,11 @@ async def get_hand_detail(hand_id: int, db: Session = Depends(get_db), current_u
         RoomPlayer.is_active == 1,
         RoomPlayer.seat_number >= 0,
     ).order_by(RoomPlayer.seat_number).all()
+
+    # 预加载所有相关用户，避免循环内逐行查询 (N+1)
+    player_user_ids = {p.user_id for p in players}
+    users_list = db.query(User).filter(User.id.in_(player_user_ids)).all()
+    user_map = {u.id: u for u in users_list}
 
     # 计算每人本轮投入
     current_round = hand.current_round if hand.current_round in ("preflop", "flop", "turn", "river") else "river"
@@ -87,9 +100,14 @@ async def get_hand_detail(hand_id: int, db: Session = Depends(get_db), current_u
     # 已 fold 的玩家
     folded_ids = {b.player_id for b in bets if b.action == "fold"}
 
+    # 已 muck 的玩家 (mucked_players 逗号串 + muck_player_id)
+    mucked_ids = {int(x) for x in (hand.mucked_players or "").split(",") if x}
+    if hand.muck_player_id:
+        mucked_ids.add(hand.muck_player_id)
+
     players_data = []
     for p in players:
-        user = db.query(User).filter(User.id == p.user_id).first()
+        user = user_map.get(p.user_id)
         role = None
         if p.id == hand.dealer_player_id:
             role = "D"
@@ -109,30 +127,44 @@ async def get_hand_detail(hand_id: int, db: Session = Depends(get_db), current_u
             "role": role,
         })
 
-    # all_hole_cards: 跳过 fold 与 muck 的玩家（与 game.py /state 对齐）
-    muck_pid = hand.muck_player_id
-    all_hole_cards = {}
-    for pid_str, cards in hole_cards.items():
-        pid = int(pid_str)
-        if pid in folded_ids:
-            continue
-        if muck_pid and pid == muck_pid:
-            continue
-        all_hole_cards[pid_str] = cards
+    # 当前用户的手牌 (任何状态下都可见自己的)
+    my_hole_cards = hole_cards_all.get(str(member.id), [])
 
-    # 当前用户的手牌
-    my_player = next((p for p in players if p.user_id == current_user.id), None)
-    my_hole_cards = []
-    if my_player and hole_cards:
-        my_hole_cards = hole_cards.get(str(my_player.id), [])
+    if hand.status == "settled":
+        # 已结算: 与 /state 口径一致，剔除 fold 与 muck 的玩家
+        hole_cards = {
+            pid_str: cards for pid_str, cards in hole_cards_all.items()
+            if int(pid_str) not in folded_ids and int(pid_str) not in mucked_ids
+        }
+        all_hole_cards = dict(hole_cards)
+    else:
+        # 未结算: hole_cards 只返回调用者本人的底牌，不泄露他人
+        hole_cards = {str(member.id): my_hole_cards} if my_hole_cards else {}
+        # 与 /state 一致: 仅 settling/settled 才公开存活玩家手牌
+        if hand.status == "settling":
+            # settling 阶段仅公开已亮牌 (revealed_players) 的玩家，
+            # 与 /state 口径一致，防止亮牌决定前底牌泄露
+            revealed_ids = {int(x) for x in (hand.revealed_players or "").split(",") if x}
+            all_hole_cards = {
+                pid_str: cards for pid_str, cards in hole_cards_all.items()
+                if int(pid_str) not in folded_ids and int(pid_str) not in mucked_ids
+                and int(pid_str) in revealed_ids
+            }
+        else:
+            all_hole_cards = {}
 
-    # 牌力评估（settled 状态下计算所有存活玩家的牌型）
+    # 牌力评估（showdown 阶段计算存活玩家牌型，剔除 muck 玩家）
     evaluations: dict = {}
-    if hand.status == "settled" and room is not None:
+    if hand.status in ("settling", "settled") and room is not None:
         try:
             engine = HandEngine(db, room)
             evals = engine.get_hand_evaluations(hand)
-            evaluations = {str(pid): ev for pid, ev in evals.items()}
+            if hand.status == "settling":
+                revealed_ids = {int(x) for x in (hand.revealed_players or "").split(",") if x}
+                hidden_ids = mucked_ids | {pid for pid in evals if pid not in revealed_ids}
+            else:
+                hidden_ids = mucked_ids
+            evaluations = {str(pid): ev for pid, ev in evals.items() if pid not in hidden_ids}
         except Exception:
             # 评估失败不影响其他字段返回
             evaluations = {}
@@ -201,9 +233,14 @@ async def get_user_games(user_id: int, db: Session = Depends(get_db), current_us
         .all()
     )
 
+    # 预加载所有涉及的 Room，避免循环内逐条查询 (N+1)
+    room_ids = {rp.room_id for rp in room_players}
+    rooms_list = db.query(Room).filter(Room.id.in_(room_ids)).all()
+    room_map = {r.id: r for r in rooms_list}
+
     games = []
     for rp in room_players:
-        room = db.query(Room).filter(Room.id == rp.room_id).first()
+        room = room_map.get(rp.room_id)
         if room is None:
             continue
 
@@ -217,15 +254,7 @@ async def get_user_games(user_id: int, db: Session = Depends(get_db), current_us
             .scalar()
         )
 
-        # 计算收获总额
-        winnings = (
-            db.query(func.coalesce(func.sum(HandResult.amount_won), 0))
-            .join(Hand, Hand.id == HandResult.hand_id)
-            .filter(Hand.room_id == room.id, HandResult.winner_id == rp.id)
-            .scalar()
-        )
-
-        # 净收益 = 最终铃钱 - 初始铃钱 - 补给
+        # 净收益 = 最终铃钱 - 初始铃钱 - 补给 (含已离岛玩家，与最终结算口径一致)
         total_profit = rp.chip_count - room.initial_chips - rebuy_total
 
         games.append({
@@ -235,7 +264,7 @@ async def get_user_games(user_id: int, db: Session = Depends(get_db), current_us
             "hand_count": hand_count,
             "total_profit": total_profit,
             "initial_chips": room.initial_chips,
-            "final_chips": rp.chip_count if rp.is_active else 0,
+            "final_chips": rp.chip_count,
             "rebuy_total": rebuy_total,
             "status": room.status,
             "created_at": room.created_at.isoformat() if room.created_at else None,
@@ -251,35 +280,46 @@ async def get_user_games(user_id: int, db: Session = Depends(get_db), current_us
 async def get_user_stats(user_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     """获取用户统计"""
     # 参与的游戏数
-    total_games = db.query(RoomPlayer).filter(RoomPlayer.user_id == user_id).count()
+    room_players = db.query(RoomPlayer).filter(RoomPlayer.user_id == user_id).all()
+    total_games = len(room_players)
 
-    # 参与的季数 (作为 player 参与)
-    player_ids = [
-        rp.id for rp in db.query(RoomPlayer).filter(RoomPlayer.user_id == user_id).all()
-    ]
+    if total_games == 0:
+        return {"total_games": 0, "total_hands": 0, "total_profit": 0, "win_rate": 0.0}
+
+    # 预加载所有涉及的 Room，避免循环内逐条查询 (N+1)
+    rp_ids = [rp.id for rp in room_players]
+    room_ids = {rp.room_id for rp in room_players}
+    rooms_list = db.query(Room).filter(Room.id.in_(room_ids)).all()
+    room_map = {r.id: r for r in rooms_list}
+
+    # 按玩家汇总 Rebuy
+    rebuy_rows = (
+        db.query(Rebuy.room_player_id, func.sum(Rebuy.amount).label("total"))
+        .filter(Rebuy.room_player_id.in_(rp_ids))
+        .group_by(Rebuy.room_player_id)
+        .all()
+    )
+    rebuy_map = {row.room_player_id: row.total for row in rebuy_rows}
 
     total_hands = 0
     total_profit = 0
     wins = 0
 
-    for pid in player_ids:
-        rp = db.query(RoomPlayer).filter(RoomPlayer.id == pid).first()
-        if rp is None:
-            continue
-
-        room = db.query(Room).filter(Room.id == rp.room_id).first()
+    for rp in room_players:
+        room = room_map.get(rp.room_id)
         if room is None:
             continue
 
-        hand_count = db.query(Hand).filter(Hand.room_id == room.id).count()
+        # 只统计玩家加入之后开始的手牌
+        hand_count = (
+            db.query(Hand)
+            .filter(Hand.room_id == room.id, Hand.created_at >= rp.joined_at)
+            .count()
+        )
         total_hands += hand_count
 
         # 净收益
-        rebuy_total = (
-            db.query(func.coalesce(func.sum(Rebuy.amount), 0))
-            .filter(Rebuy.room_player_id == pid)
-            .scalar()
-        )
+        rebuy_total = rebuy_map.get(rp.id, 0)
         profit = rp.chip_count - room.initial_chips - rebuy_total
         total_profit += profit
 

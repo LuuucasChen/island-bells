@@ -16,11 +16,14 @@ Environment=APP_ENV=prod
 # 日志目录
 LogsDirectory=island_bells
 
+# 必须单 worker: WS 连接管理器与房间活跃度计时均为进程内存态,
+# 多 worker 会导致跨进程广播丢失、活跃房间被误判超时强杀
+
 ExecStart=/opt/island_bells/backend/venv/bin/uvicorn \
     app.main:app \
     --host 127.0.0.1 \
     --port 8000 \
-    --workers 2 \
+    --workers 1 \
     --log-level warning \
     --access-log
 

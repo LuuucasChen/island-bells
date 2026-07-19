@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { useGameStore } from './gameStore'
+import { useAuthStore } from './authStore'
 
 /** 连接状态: connecting 表示正在连接/重连中 */
 type ConnStatus = 'connected' | 'disconnected' | 'connecting'
@@ -140,7 +141,28 @@ function _createConnection(roomId: number, token: string) {
     } catch { /* ignore */ }
   }
 
-  ws.onclose = () => {
+  ws.onclose = (event) => {
+    // 4001: 后端鉴权失败 —— 停止重连并登出; 4003: 非房间成员 —— 停止重连
+    if (event.code === 4001 || event.code === 4003) {
+      const state = useWsStore.getState()
+      if (state._pingTimer) {
+        clearInterval(state._pingTimer)
+      }
+      useWsStore.setState({
+        status: 'disconnected',
+        connected: false,
+        reconnecting: false,
+        _pingTimer: null,
+        roomId: null, // 置空 roomId，阻断 _handleDisconnect 的自动重连
+      })
+      if (event.code === 4001) {
+        useAuthStore.getState().logout()
+        if (window.location.pathname !== '/') {
+          window.location.href = '/'
+        }
+      }
+      return
+    }
     _handleDisconnect(roomId)
   }
 

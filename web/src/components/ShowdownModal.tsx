@@ -82,25 +82,30 @@ export function ShowdownModal({
 }: ShowdownModalProps) {
   const playerMap = Object.fromEntries(players.map((p) => [p.player_id, p]))
 
-  // 找到赢家信息
-  const winnerIds = results?.map((r) => r.winner_id) || []
+  // 找到赢家信息 (平分底池时含多个赢家，按 winner_id 去重)
+  const winnerIds = [...new Set((results || []).map((r) => r.winner_id))]
   const winners = winnerIds.map((id) => playerMap[id]).filter(Boolean)
   const winnerNicknames = winners.map((w) => w.nickname).join('、')
 
   // 检查赢家是否盖牌
   const isWinnerMucked = muckPlayerId ? winnerIds.includes(muckPlayerId) : false
 
-  // 找到赢家的手牌（取第一个赢家）— 如果盖牌则为空
-  const winnerCards = !isWinnerMucked && winnerIds.length > 0
-    ? (allHoleCards[String(winnerIds[0])] || [])
-    : []
+  // 所有未盖牌赢家的手牌 (平分底池时展示每位赢家) — 如果盖牌则为空
+  const winnerHands = winnerIds
+    .filter((id) => id !== muckPlayerId)
+    .map((id) => ({
+      playerId: id,
+      nickname: playerMap[id]?.nickname || '未知',
+      cards: allHoleCards[String(id)] || [],
+      eval: evaluations[String(id)] || null,
+    }))
+    .filter((w) => w.cards.length > 0)
 
   // 找到我的手牌对应的 player_id
   const myPlayer = players.find((p) => p.user_id === myUserId)
   const myPlayerId = myPlayer?.player_id
   const isMeWinner = myPlayerId ? winnerIds.includes(myPlayerId) : false
   const myEval = myPlayerId ? evaluations[String(myPlayerId)] : null
-  const winnerEval = winnerIds.length > 0 ? evaluations[String(winnerIds[0])] : null
 
   // 每个玩家的本局总下注 (用于计算净收益)
   const betMap = (bets || []).reduce((acc, b) => {
@@ -108,17 +113,25 @@ export function ShowdownModal({
     return acc
   }, {} as Record<number, number>)
 
-  // Bug fix: 计算有效下注 (考虑 fold 退款逻辑)
-  // 后端 _calculate_pots_for_hand 会在 fold 时退还多余筹码，
-  // 但 bets 数据是原始下注额，这里需应用同样的退款逻辑
+  // 计算有效下注 (与后端 fold 退款口径一致):
+  // - 正常 showdown (有人 fold 但至少 2 人存活): 不做任何 cap，所有人 (含 fold 者) 投入全额入池
+  // - ended_by_fold (fold 到只剩 1 人): 仅唯一存活者超出其他所有玩家 (含 fold 者)
+  //   最大投入的「无人跟注」部分退回本人，其余人投入全额入池
   const effectiveBetMap = (() => {
     const map = { ...betMap }
-    const foldedPids = new Set(players.filter(p => p.is_folded).map(p => p.player_id))
-    if (foldedPids.size > 0) {
-      const maxFoldedBet = Math.max(...[...foldedPids].map(pid => betMap[pid] || 0))
-      for (const pid of Object.keys(map)) {
-        if (map[Number(pid)] > maxFoldedBet) {
-          map[Number(pid)] = maxFoldedBet
+    if (endedByFold) {
+      const alivePlayers = players.filter((p) => !p.is_folded)
+      if (alivePlayers.length === 1) {
+        const survivorId = alivePlayers[0].player_id
+        const survivorBet = betMap[survivorId] || 0
+        const maxOtherBet = Math.max(
+          0,
+          ...Object.keys(betMap)
+            .filter((k) => Number(k) !== survivorId)
+            .map((k) => betMap[Number(k)]),
+        )
+        if (survivorBet > maxOtherBet) {
+          map[survivorId] = maxOtherBet
         }
       }
     }
@@ -192,20 +205,20 @@ export function ShowdownModal({
           </div>
         )}
 
-        {/* 赢家手牌 */}
-        {settled && winnerCards.length > 0 && (
-          <div className="showdown-section">
+        {/* 赢家手牌 (平分底池时展示每位赢家) */}
+        {settled && winnerHands.map((w) => (
+          <div key={w.playerId} className="showdown-section">
             <div className="showdown-section-label">
-              🏆 {winnerNicknames} 的手牌
-              {winnerEval && <span className="hand-type-badge">{winnerEval.hand_type_name}</span>}
+              🏆 {w.nickname} 的手牌
+              {w.eval && <span className="hand-type-badge">{w.eval.hand_type_name}</span>}
             </div>
             <div className="showdown-cards-row">
-              {winnerCards.map((card, i) => (
+              {w.cards.map((card, i) => (
                 <PlayingCard key={i} suit={card.suit} rank={card.rank} size="normal" />
               ))}
             </div>
           </div>
-        )}
+        ))}
 
         {/* 赢家盖牌提示 */}
         {settled && isWinnerMucked && endedByFold && (

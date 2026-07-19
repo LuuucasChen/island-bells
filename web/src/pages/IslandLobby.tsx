@@ -31,8 +31,9 @@ function IslandLobby() {
   const [showCopyToast, setShowCopyToast] = useState(false)
   const [errorToast, setErrorToast] = useState('')
 
-  // WS 连接（roomId 为 0 时不会建立连接，loadRoom 后会更新）
-  useWebSocket(game.roomId || null)
+  // WS 连接：仅在已确认加入房间后才建立，防止未 join 时被后端 4003 拒绝后无法重连
+  // (后端对非成员返回 4003 + 前端只连一次，两者叠加会导致 join 后 WS 永久断开)
+  useWebSocket(joined ? game.roomId || null : null)
   const lobbyVersion = useGameStore((s) => s.lobbyVersion)
   const prevLobbyVersion = useRef(0)
 
@@ -111,8 +112,19 @@ function IslandLobby() {
       setJoined(true)
       await loadRoom()
     } catch (e) {
+      const msg = (e as Error).message || ''
       console.error('加入岛屿失败:', e)
-      setError(true)
+      // 只有确实 404 时才判定岛屿不存在
+      if (msg.includes('不存在') || msg.includes('404')) {
+        setError(true)
+        return
+      }
+      // Conflict (已在岛上) / 岛屿已满 / 已结束 等: 刷新座位状态并给出对应提示
+      if (msg.includes('已经在这个岛屿') || msg.includes('已满') || msg.includes('已结束') || msg.includes('409')) {
+        await loadRoom()
+      }
+      setErrorToast(msg || '加入失败，请稍后重试')
+      setTimeout(() => setErrorToast(''), 3000)
     }
   }
 
@@ -123,6 +135,14 @@ function IslandLobby() {
       handleJoin()
     }
   }, [loading, joined, error])
+
+  // 手动重试: 重置错误态并重新加载 (加载完成后会自动重试 join)
+  const handleRetry = async () => {
+    setError(false)
+    setLoading(true)
+    joinAttempted.current = false
+    await loadRoom()
+  }
 
   useEffect(() => {
     if (lobbyVersion > prevLobbyVersion.current) {
@@ -194,7 +214,10 @@ function IslandLobby() {
           <div style={{ fontSize: 36, marginBottom: 12 }}>🏝️</div>
           <div style={{ fontSize: 16, fontWeight: 600, color: '#794f27', marginBottom: 8 }}>岛屿不存在或已关闭</div>
           <div style={{ fontSize: 13, color: '#9f927d', marginBottom: 20 }}>请检查渡渡鸟码是否正确</div>
-          <Button type="primary" onClick={() => navigate('/')}>返回首页</Button>
+          <div style={{ display: 'flex', gap: 12, justifyContent: 'center' }}>
+            <Button type="default" onClick={handleRetry}>重试</Button>
+            <Button type="primary" onClick={() => navigate('/')}>返回首页</Button>
+          </div>
         </div>
       </Layout>
     )
@@ -267,6 +290,13 @@ function IslandLobby() {
           )
         })}
       </div>
+
+      {/* 未加入时的手动加入/重试入口 (自动 join 失败后可手动重试) */}
+      {!joined && (
+        <div style={{ textAlign: 'center', marginTop: 16 }}>
+          <Button type="primary" onClick={handleJoin}>加入岛屿</Button>
+        </div>
+      )}
 
       {seatedPlayers.some((s) => s.user_id === myUserId) && !isOwner && seatedPlayers.length >= 2 && (
         <div className="app-empty" style={{ marginTop: 16 }}>

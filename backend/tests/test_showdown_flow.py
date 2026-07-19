@@ -100,15 +100,15 @@ class TestNormalShowdownFlow:
         db.refresh(hand)
         assert hand.turn_player_id is None  # 本轮结束
 
-        # Flop (2人局 post-flop SB先行动)
+        # Flop (2人局 post-flop BB先行动，庄家/SB最后行动)
         engine.advance_round(hand)
         db.refresh(hand)
         assert hand.current_round == "flop"
 
-        # Flop: SB check, BB check
-        engine.place_bet(hand, p_sb, "check")
-        db.refresh(hand)
+        # Flop: BB check, SB check
         engine.place_bet(hand, p_bb, "check")
+        db.refresh(hand)
+        engine.place_bet(hand, p_sb, "check")
         db.refresh(hand)
 
         # Turn
@@ -116,10 +116,10 @@ class TestNormalShowdownFlow:
         db.refresh(hand)
         assert hand.current_round == "turn"
 
-        # Turn: SB check, BB check
-        engine.place_bet(hand, p_sb, "check")
-        db.refresh(hand)
+        # Turn: BB check, SB check
         engine.place_bet(hand, p_bb, "check")
+        db.refresh(hand)
+        engine.place_bet(hand, p_sb, "check")
         db.refresh(hand)
 
         # River
@@ -127,10 +127,10 @@ class TestNormalShowdownFlow:
         db.refresh(hand)
         assert hand.current_round == "river"
 
-        # River: SB check, BB check
-        engine.place_bet(hand, p_sb, "check")
-        db.refresh(hand)
+        # River: BB check, SB check
         engine.place_bet(hand, p_bb, "check")
+        db.refresh(hand)
+        engine.place_bet(hand, p_sb, "check")
         db.refresh(hand)
 
         # Advance to showdown
@@ -175,10 +175,14 @@ class TestFoldEndFlow:
         engine.place_bet(hand, p_bb, "check")
         db.refresh(hand)
 
-        # Flop (post-flop SB先行动)
+        # Flop (post-flop BB先行动)
         engine.advance_round(hand)
         db.refresh(hand)
         assert hand.current_round == "flop"
+
+        # BB check 后轮到 SB
+        engine.place_bet(hand, p_bb, "check")
+        db.refresh(hand)
 
         # SB fold
         engine.place_bet(hand, p_sb, "fold")
@@ -329,26 +333,26 @@ class TestDuplicateReveal:
         engine.advance_round(hand)
         db.refresh(hand)
 
-        # Flop (post-flop SB先行动)
-        engine.place_bet(hand, p_sb, "check")
-        db.refresh(hand)
+        # Flop (post-flop BB先行动)
         engine.place_bet(hand, p_bb, "check")
+        db.refresh(hand)
+        engine.place_bet(hand, p_sb, "check")
         db.refresh(hand)
         engine.advance_round(hand)
         db.refresh(hand)
 
         # Turn
-        engine.place_bet(hand, p_sb, "check")
-        db.refresh(hand)
         engine.place_bet(hand, p_bb, "check")
+        db.refresh(hand)
+        engine.place_bet(hand, p_sb, "check")
         db.refresh(hand)
         engine.advance_round(hand)
         db.refresh(hand)
 
         # River
-        engine.place_bet(hand, p_sb, "check")
-        db.refresh(hand)
         engine.place_bet(hand, p_bb, "check")
+        db.refresh(hand)
+        engine.place_bet(hand, p_sb, "check")
         db.refresh(hand)
         engine.advance_round(hand)
         db.refresh(hand)

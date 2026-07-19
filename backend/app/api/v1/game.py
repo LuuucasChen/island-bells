@@ -27,12 +27,6 @@ class BetRequest(BaseModel):
     action: str   # call / raise / allin / fold / check
     amount: int = 0
 
-    def get_action(self) -> str:
-        """将 check 转换为 call (amount=0)"""
-        if self.action == "check":
-            return "call"
-        return self.action
-
 
 class SettleResultItem(BaseModel):
     pot_id: int
@@ -87,12 +81,26 @@ async def start_game(room_id: int, db: Session = Depends(get_db), current_user: 
     if seated < 2:
         raise BadRequestException("至少需要2名已入座居民")
 
-    room.status = "playing"
-    db.commit()
+    # 校验前置: 有铃钱的入座玩家必须 >= 2，否则 start_new_hand 必失败
+    seated_with_chips = db.query(RoomPlayer).filter(
+        RoomPlayer.room_id == room_id,
+        RoomPlayer.is_active == 1,
+        RoomPlayer.seat_number >= 0,
+        RoomPlayer.chip_count > 0,
+    ).count()
 
-    # 自动开始第一季
+    if seated_with_chips < 2:
+        raise BadRequestException("至少需要2名铃钱大于0的已入座玩家")
+
+    # 状态变更与第一季创建放在同一事务: start_new_hand 内部 commit 时一并提交，
+    # 任何失败整体回滚，避免房间卡在 playing
+    room.status = "playing"
     engine = HandEngine(db, room)
-    hand = engine.start_new_hand()
+    try:
+        hand = engine.start_new_hand()
+    except Exception:
+        db.rollback()
+        raise
 
     # 记录活跃时间，启动死牌局倒计时
     activity_tracker.touch(room_id)
@@ -176,6 +184,9 @@ async def advance_round(hand_id: int, db: Session = Depends(get_db), current_use
     engine = HandEngine(db, room)
     hand = engine.advance_round(hand)
 
+    # 推进阶段属于活跃事件，重置死牌局倒计时
+    activity_tracker.touch(hand.room_id)
+
     # WebSocket 广播
     await ws_manager.broadcast_to_room(hand.room_id, {
         "type": "round_advance",
@@ -248,8 +259,41 @@ async def settle_hand(hand_id: int, req: SettleRequest, db: Session = Depends(ge
     if room.owner_id != current_user.id:
         raise ForbiddenException("只有岛主可以提交收获")
 
+    # === 手动结算校验: 不完全信任客户端 ===
+    pots = db.query(Pot).filter(Pot.hand_id == hand.id).all()
+    pots_by_id = {p.id: p for p in pots}
+    pot_sums: dict[int, int] = {}
+    for item in req.results:
+        pot = pots_by_id.get(item.pot_id)
+        if pot is None:
+            raise BadRequestException(f"收获篮 {item.pot_id} 不属于该季节")
+        if not item.winner_ids:
+            raise BadRequestException("赢家列表不能为空")
+        if item.amount < 0:
+            raise BadRequestException("收获金额不能为负数")
+        eligible = {int(x) for x in (pot.eligible_player_ids or "").split(",") if x}
+        for wid in item.winner_ids:
+            if wid not in eligible:
+                raise BadRequestException(f"玩家 {wid} 不在该收获篮的 eligible 名单中")
+            winner = db.query(RoomPlayer).filter(
+                RoomPlayer.id == wid,
+                RoomPlayer.room_id == room.id,
+            ).first()
+            if winner is None:
+                raise BadRequestException(f"玩家 {wid} 不属于本岛屿")
+        pot_sums[item.pot_id] = pot_sums.get(item.pot_id, 0) + item.amount
+    # 每个收获篮必须被完全分配: Σamount_won == pot.amount
+    for pot in pots:
+        if pot_sums.get(pot.id, 0) != pot.amount:
+            raise BadRequestException(
+                f"收获篮 {pot.id} 分配金额与篮金额不符 (应分配 {pot.amount})"
+            )
+
     engine = HandEngine(db, room)
-    results = engine.settle_hand(hand, [r.dict() for r in req.results])
+    results = engine.settle_hand(hand, [r.model_dump() for r in req.results])
+
+    # 收获结算属于活跃事件，重置死牌局倒计时
+    activity_tracker.touch(hand.room_id)
 
     # WebSocket 广播
     await ws_manager.broadcast_to_room(hand.room_id, {
@@ -273,8 +317,27 @@ async def rebuy(room_id: int, req: RebuyRequest, db: Session = Depends(get_db), 
     room = _get_room_or_404(db, room_id)
     player = _get_player_or_404(db, room_id, current_user.id)
 
+    # 仅游戏进行中允许补给 (waiting / finished 均拒绝)
+    if room.status != "playing":
+        raise BadRequestException("游戏未在进行中，无法补给")
+
+    # 当前未结算手牌的参与者，需等本手结束后才能补给
+    active_hand = (
+        db.query(Hand)
+        .filter(Hand.room_id == room_id, Hand.status.in_(["betting", "settling"]))
+        .order_by(Hand.hand_number.desc())
+        .first()
+    )
+    if active_hand and active_hand.hole_cards:
+        participant_ids = json.loads(active_hand.hole_cards).keys()
+        if str(player.id) in participant_ids:
+            raise BadRequestException("本手结束后才能补给")
+
     engine = HandEngine(db, room)
     rebuy_record = engine.rebuy(player, req.amount)
+
+    # 补给属于活跃事件，重置死牌局倒计时
+    activity_tracker.touch(room_id)
 
     # WebSocket 广播
     await ws_manager.broadcast_to_room(room_id, {
@@ -320,24 +383,68 @@ async def _finish_room_impl(db: Session, room: Room, reason: str = "owner") -> l
     """
     room_id = room.id
 
-    # 结算当前未完成的季
-    active_hand = (
-        db.query(Hand)
-        .filter(Hand.room_id == room_id, Hand.status.in_(["betting", "settling"]))
-        .first()
-    )
-    if active_hand:
-        active_hand.status = "settled"
-        active_hand.settled_at = datetime.now(timezone.utc)
+    now = datetime.now(timezone.utc)
 
-    room.status = "finished"
-    room.closed_at = datetime.now(timezone.utc)
+    # 原子占位: 并发调用 (岛主 end-game / 死牌局清理 / 前端双击) 只有一方能把
+    # status 从非 finished 改为 finished，未占位成功者跳过退款，防止双重退款
+    claimed = (
+        db.query(Room)
+        .filter(Room.id == room_id, Room.status != "finished")
+        .update({"status": "finished", "closed_at": now}, synchronize_session=False)
+    )
+    # 同步 session 内 room 对象的陈旧状态
+    db.expire(room, ["status", "closed_at"])
+
+    if claimed:
+        # 结算当前未完成的季: 强杀前把该手全部有效投入退回各玩家，避免底池蒸发
+        active_hand = (
+            db.query(Hand)
+            .filter(Hand.room_id == room_id, Hand.status.in_(["betting", "settling"]))
+            .first()
+        )
+        if active_hand:
+            hand_bets = db.query(Bet).filter(Bet.hand_id == active_hand.id).all()
+            player_totals: dict[int, int] = {}
+            for b in hand_bets:
+                player_totals[b.player_id] = player_totals.get(b.player_id, 0) + b.amount
+
+            refunds = dict(player_totals)
+            if active_hand.status == "settling":
+                # 池已在引擎算池时按 uncalled-bet 规则定案 (见 HandEngine._calculate_pots_for_hand):
+                # - 正常 showdown: 引擎未做 cap，有效投入 = 原始投入，全额退回即账平
+                # - ended_by_fold (存活 ≤1): 引擎已把"未跟注部分"退还给存活的最高投入者，
+                #   池中只剩其有效投入 (= 其他所有人 (含 fold 者) 的最大投入)，
+                #   强杀时按此口径退还，避免重复退款
+                folded_ids = {b.player_id for b in hand_bets if b.action == "fold"}
+                alive_ids = [pid for pid in player_totals if pid not in folded_ids]
+                if active_hand.ended_by_fold or len(alive_ids) <= 1:
+                    top_pid = max(alive_ids, key=lambda pid: player_totals[pid], default=None)
+                    if top_pid is not None:
+                        others_max = max(
+                            (total for pid, total in player_totals.items() if pid != top_pid),
+                            default=0,
+                        )
+                        if player_totals[top_pid] > others_max:
+                            refunds[top_pid] = others_max
+
+            for pid, amount in refunds.items():
+                if amount <= 0:
+                    continue
+                rp = db.query(RoomPlayer).filter(RoomPlayer.id == pid).first()
+                if rp:
+                    rp.chip_count += amount
+
+            # 不生成 Pot/HandResult，直接置 settled
+            active_hand.pot_total = 0
+            active_hand.status = "settled"
+            active_hand.settled_at = now
+
     db.commit()
 
-    # 计算最终结算: 所有玩家 (包括已离岛但 is_active=1 的)
+    # 计算最终结算: 所有曾经加入的玩家 (含已离岛 is_active=0)，保证账本平衡
     all_players = (
         db.query(RoomPlayer)
-        .filter(RoomPlayer.room_id == room.id, RoomPlayer.is_active == 1)
+        .filter(RoomPlayer.room_id == room.id)
         .all()
     )
 
@@ -403,6 +510,9 @@ async def advance_round_shortcut(room_id: int, db: Session = Depends(get_db), cu
     engine = HandEngine(db, room)
     hand = engine.advance_round(active_hand)
 
+    # 推进阶段属于活跃事件，重置死牌局倒计时
+    activity_tracker.touch(room_id)
+
     ws_data = {
         "hand_id": hand.id,
         "current_round": hand.current_round,
@@ -457,6 +567,9 @@ async def settle_hand_shortcut(room_id: int, db: Session = Depends(get_db), curr
     engine = HandEngine(db, room)
     hand_results = engine.settle_hand(settling_hand, results=None)
 
+    # 收获结算属于活跃事件，重置死牌局倒计时
+    activity_tracker.touch(room_id)
+
     # 获取牌力评估信息用于广播
     evaluations = engine.get_hand_evaluations(settling_hand)
 
@@ -500,15 +613,24 @@ async def muck_hand(room_id: int, db: Session = Depends(get_db), current_user: U
     if not settling_hand.ended_by_fold:
         raise BadRequestException("只有因弃牌结束的牌局才能盖牌")
 
-    # 验证调用者是唯一存活玩家 (赢家)
+    # 验证调用者是唯一存活玩家 (赢家) — 用本手参与者口径 (hole_cards keys 减 fold)，
+    # 与引擎一致: 离局/站起但未 fold 的参与者仍算存活 (用 get_active_seated_players
+    # 会把他们排除在外，导致赢家离岛后任何人都无法盖牌)
     all_bets = db.query(Bet).filter(Bet.hand_id == settling_hand.id).all()
     folded_ids = {b.player_id for b in all_bets if b.action == "fold"}
-    alive = [p for p in get_active_seated_players(db, room_id) if p.id not in folded_ids]
-    if len(alive) != 1 or alive[0].id != player.id:
+    participant_ids = (
+        {int(pid) for pid in json.loads(settling_hand.hole_cards).keys()}
+        if settling_hand.hole_cards else set()
+    )
+    alive_ids = [pid for pid in participant_ids if pid not in folded_ids]
+    if len(alive_ids) != 1 or alive_ids[0] != player.id:
         raise ForbiddenException("只有赢家可以选择是否盖牌")
 
     settling_hand.muck_player_id = player.id
     db.commit()
+
+    # 盖牌决定属于活跃事件，重置死牌局倒计时
+    activity_tracker.touch(room_id)
 
     await ws_manager.broadcast_to_room(room_id, {
         "type": "muck_chosen",
@@ -573,6 +695,9 @@ async def reveal_hand(room_id: int, req: RevealRequest, db: Session = Depends(ge
 
     db.commit()
 
+    # 亮牌/盖牌决定属于活跃事件，重置死牌局倒计时
+    activity_tracker.touch(room_id)
+
     # 判断是否所有人都已决定 (亮牌 + 盖牌 == 存活玩家数)
     alive_players = [p for p in get_active_seated_players(db, room_id) if p.id not in folded_ids]
     alive_ids = {p.id for p in alive_players}
@@ -615,7 +740,8 @@ async def player_action_shortcut(room_id: int, req: BetRequest, db: Session = De
     player = _get_player_or_404(db, room_id, current_user.id)
     room = _get_room_or_404(db, room_id)
     engine = HandEngine(db, room)
-    bet = engine.place_bet(active_hand, player, req.get_action(), req.amount)
+    # action 原样传给引擎，由引擎校验 check 合法性 (有注额时拒绝)
+    bet = engine.place_bet(active_hand, player, req.action, req.amount)
 
     db.refresh(active_hand)
 
@@ -710,8 +836,8 @@ def _build_game_state(db: Session, room: Room, current_user: User) -> dict:
         # 获取收获篮
         pots = db.query(Pot).filter(Pot.hand_id == display_hand.id).all()
 
-        # 获取本季所有投入
-        bets = db.query(Bet).filter(Bet.hand_id == display_hand.id).order_by(Bet.created_at).all()
+        # 获取本季所有投入 (按自增 id 排序 = 真实时间序; created_at 是秒级, 同秒多次下注会乱序)
+        bets = db.query(Bet).filter(Bet.hand_id == display_hand.id).order_by(Bet.id).all()
 
         # 获取玩家列表
         players = db.query(RoomPlayer).filter(
@@ -759,6 +885,8 @@ def _build_game_state(db: Session, room: Room, current_user: User) -> dict:
             "status": display_hand.status,
             "pot_total": display_hand.pot_total,
             "turn_player_id": display_hand.turn_player_id,
+            # 本轮最小加注增量 (与下注校验同一口径)，供前端计算合法加注下限
+            "min_raise": HandEngine(db, room).compute_min_raise(round_bets),
             "pots": [
                 {
                     "pot_id": pot.id,
@@ -798,11 +926,20 @@ def _build_game_state(db: Session, room: Room, current_user: User) -> dict:
         else:
             hand_data["my_hole_cards"] = []
 
-        # showdown 时返回所有存活玩家的手牌（用于内联展示）
-        # fold 玩家不返回，muck 玩家不返回
+        # showdown 时返回存活玩家的手牌（用于内联展示）
+        # fold 玩家不返回，muck 玩家不返回 (mucked_players 与 muck_player_id 均剔除)
+        # settling 阶段仅返回已亮牌 (revealed_players) 的玩家:
+        # 否则任何客户端在亮牌/盖牌决定前拉一次 /state 即可看到全部底牌，盖牌形同虚设
         if display_hand.status in ("settling", "settled") and display_hand.hole_cards:
             hole_data = json.loads(display_hand.hole_cards)
-            muck_pid = display_hand.muck_player_id
+            mucked_pids = {
+                int(x) for x in (display_hand.mucked_players or "").split(",") if x
+            }
+            if display_hand.muck_player_id:
+                mucked_pids.add(display_hand.muck_player_id)
+            revealed_pids = {
+                int(x) for x in (display_hand.revealed_players or "").split(",") if x
+            }
             folded_pids = {
                 b.player_id for b in db.query(Bet)
                 .filter(Bet.hand_id == display_hand.id, Bet.action == "fold")
@@ -814,19 +951,33 @@ def _build_game_state(db: Session, room: Room, current_user: User) -> dict:
                 # 跳过 fold 和 muck 的玩家
                 if pid in folded_pids:
                     continue
-                if muck_pid and pid == muck_pid:
+                if pid in mucked_pids:
+                    continue
+                # settling 阶段只公开已亮牌者；settled 后按完整口径返回
+                if display_hand.status == "settling" and pid not in revealed_pids:
                     continue
                 all_hole_cards[pid_str] = cards
             hand_data["all_hole_cards"] = all_hole_cards
         else:
             hand_data["all_hole_cards"] = {}
 
-        # 牌力评估（showdown 时返回所有存活玩家的牌型）
+        # 牌力评估（showdown 时返回存活玩家的牌型，剔除 muck 玩家;
+        # settling 阶段同样只返回已亮牌者，避免牌型提前泄露）
         if display_hand.status in ("settling", "settled"):
             engine = HandEngine(db, room)
             evals = engine.get_hand_evaluations(display_hand)
+            hidden_pids = {
+                int(x) for x in (display_hand.mucked_players or "").split(",") if x
+            }
+            if display_hand.muck_player_id:
+                hidden_pids.add(display_hand.muck_player_id)
+            if display_hand.status == "settling":
+                revealed_pids = {
+                    int(x) for x in (display_hand.revealed_players or "").split(",") if x
+                }
+                hidden_pids |= {pid for pid in evals if pid not in revealed_pids}
             hand_data["evaluations"] = {
-                str(pid): ev for pid, ev in evals.items()
+                str(pid): ev for pid, ev in evals.items() if pid not in hidden_pids
             }
         else:
             hand_data["evaluations"] = {}
@@ -855,12 +1006,12 @@ def _build_game_state(db: Session, room: Room, current_user: User) -> dict:
                 my_eval = None
         hand_data["my_evaluation"] = my_eval
 
-    # 如果牌局已结束，附加最终结算数据
+    # 如果牌局已结束，附加最终结算数据 (含已离岛玩家，与 _finish_room_impl 口径一致)
     final_settlement = None
     if room.status == "finished":
         all_players = (
             db.query(RoomPlayer)
-            .filter(RoomPlayer.room_id == room.id, RoomPlayer.is_active == 1)
+            .filter(RoomPlayer.room_id == room.id)
             .all()
         )
         settlement_list = []

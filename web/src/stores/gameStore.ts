@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { useAuthStore } from './authStore'
 
 interface CardData {
   suit: 'spades' | 'hearts' | 'diamonds' | 'clubs'
@@ -37,6 +38,8 @@ interface HandState {
   status: string
   pot_total: number
   turn_player_id: number | null
+  /** 本轮最小加注增量 (后端与下注校验同一口径) */
+  min_raise?: number
   pots: Pot[]
   players: Player[]
   bets: any[]
@@ -138,6 +141,22 @@ const getAuthHeaders = () => {
   return { 'Content-Type': 'application/json' }
 }
 
+/** 统一 fetch 封装: 401 (token 失效) 时登出并跳转首页，各调用点无需重复处理 */
+const apiFetch = async (url: string, options: RequestInit = {}): Promise<Response> => {
+  const res = await fetch(url, { ...options, headers: getAuthHeaders() })
+  if (res.status === 401) {
+    useAuthStore.getState().logout()
+    if (window.location.pathname !== '/') {
+      window.location.href = '/'
+    }
+    throw new Error('登录已过期，请重新登录')
+  }
+  return res
+}
+
+// loadGameState 请求序号: 只允许最新一次请求的响应写入 store，避免旧快照覆盖新状态
+let loadGameStateSeq = 0
+
 export const useGameStore = create<GameState>()((set, get) => ({
   roomId: 0,
   roomCode: '',
@@ -158,8 +177,19 @@ export const useGameStore = create<GameState>()((set, get) => ({
   playerActions: {},
 
   loadRoom: async (code: string) => {
-    const headers = getAuthHeaders()
-    const res = await fetch(`${API_BASE}/rooms/${code}`, { headers })
+    // 进入不同房间时，清空上一房间的对局残留 (settleResults/showdownReveal 等)，防止污染新房间
+    if (get().roomCode && get().roomCode !== code) {
+      set({
+        currentHand: null,
+        settleResults: null,
+        showdownReveal: false,
+        endedByFold: false,
+        finalSettlement: null,
+        lastSettledHandId: null,
+        playerActions: {},
+      })
+    }
+    const res = await apiFetch(`${API_BASE}/rooms/${code}`)
     if (!res.ok) {
       throw new Error(`房间加载失败 (${res.status})`)
     }
@@ -179,12 +209,14 @@ export const useGameStore = create<GameState>()((set, get) => ({
   },
 
   loadGameState: async (roomId: number) => {
-    const headers = getAuthHeaders()
-    const res = await fetch(`${API_BASE}/rooms/${roomId}/state`, { headers })
+    const reqId = ++loadGameStateSeq
+    const res = await apiFetch(`${API_BASE}/rooms/${roomId}/state`)
     if (!res.ok) {
       throw new Error(`游戏状态加载失败 (${res.status})`)
     }
     const data = await res.json()
+    // 已有更新的请求发出，丢弃这份旧快照，避免覆盖新状态
+    if (reqId !== loadGameStateSeq) return
     // 设置 owner 信息（如果 API 返回了）
     if (data.owner_id) {
       const authData = JSON.parse(localStorage.getItem('island-bells-auth') || '{}')
@@ -195,8 +227,12 @@ export const useGameStore = create<GameState>()((set, get) => ({
         isOwner: data.owner_id === myUserId,
       })
     }
+    const prevRoomId = get().roomId
     set({
       roomId: roomId,
+      // state 响应不含 room_code 字段: 同房间时保留已有值；跨房间/刷新时置空，
+      // 由调用方 (如 handleStand) 对空 roomCode 做兜底
+      roomCode: data.room_code || (prevRoomId === roomId ? get().roomCode : ''),
       roomName: data.room_name || '',
       roomStatus: data.room_status,
       currentHand: data.current_hand,
@@ -208,10 +244,8 @@ export const useGameStore = create<GameState>()((set, get) => ({
   },
 
   sit: async (roomId: number, seatNumber: number) => {
-    const headers = getAuthHeaders()
-    const res = await fetch(`${API_BASE}/rooms/${roomId}/sit`, {
+    const res = await apiFetch(`${API_BASE}/rooms/${roomId}/sit`, {
       method: 'POST',
-      headers,
       body: JSON.stringify({ seat_number: seatNumber }),
     })
     if (!res.ok) {
@@ -222,10 +256,8 @@ export const useGameStore = create<GameState>()((set, get) => ({
   },
 
   stand: async (roomId: number) => {
-    const headers = getAuthHeaders()
-    const res = await fetch(`${API_BASE}/rooms/${roomId}/stand`, {
+    const res = await apiFetch(`${API_BASE}/rooms/${roomId}/stand`, {
       method: 'POST',
-      headers,
     })
     if (!res.ok) {
       const data = await res.json().catch(() => ({}))
@@ -235,10 +267,8 @@ export const useGameStore = create<GameState>()((set, get) => ({
   },
 
   startGame: async (roomId: number) => {
-    const headers = getAuthHeaders()
-    const res = await fetch(`${API_BASE}/rooms/${roomId}/start`, {
+    const res = await apiFetch(`${API_BASE}/rooms/${roomId}/start`, {
       method: 'POST',
-      headers,
     })
     if (!res.ok) {
       const data = await res.json().catch(() => ({}))
@@ -259,6 +289,25 @@ export const useGameStore = create<GameState>()((set, get) => ({
         }
       }
       set({ playerActions: actions })
+      // 先把 WS payload 里的轮次/公共牌写入 store，避免 loadGameState 返回前
+      // 公共牌张数仍是旧值导致翻牌动画按旧张数启动、张数更新后动画重启闪烁
+      const ch = get().currentHand
+      if (ch && (!wsData.hand_id || wsData.hand_id === ch.hand_id)) {
+        set({
+          currentHand: {
+            ...ch,
+            current_round: wsData.current_round || ch.current_round,
+            status: wsData.status || ch.status,
+            pot_total: wsData.pot_total ?? ch.pot_total,
+            ...(Array.isArray(wsData.community_cards)
+              ? { community_cards: wsData.community_cards }
+              : {}),
+            ...(wsData.ended_by_fold !== undefined
+              ? { ended_by_fold: !!wsData.ended_by_fold }
+              : {}),
+          },
+        })
+      }
       // 进入 showdown: 触发翻牌动画
       if (wsData.status === 'settling') {
         set({ showdownReveal: true, endedByFold: !!wsData.ended_by_fold })
@@ -303,6 +352,10 @@ export const useGameStore = create<GameState>()((set, get) => ({
       // Showdown 亮牌/盖牌事件: 刷新游戏状态
       const roomId = get().roomId
       get().loadGameState(roomId)
+    } else if (data.type === 'rebuy') {
+      // 其他玩家补给铃钱: 刷新游戏状态 (与其他状态变更一致)
+      const roomId = get().roomId
+      get().loadGameState(roomId)
     } else if (data.type === 'game_ended') {
       // 牌局结束: 存储最终结算数据
       if (data.data?.settlement) {
@@ -320,8 +373,7 @@ export const useGameStore = create<GameState>()((set, get) => ({
 
   loadHistoryHand: async (handId: number) => {
     // 加载指定牌局的完整回顾数据 (公共牌 / 所有人手牌 / 牌力评估 / 收获汇总)
-    const headers = getAuthHeaders()
-    const res = await fetch(`${API_BASE}/hands/${handId}`, { headers })
+    const res = await apiFetch(`${API_BASE}/hands/${handId}`)
     if (!res.ok) {
       throw new Error(`牌局回顾加载失败 (${res.status})`)
     }

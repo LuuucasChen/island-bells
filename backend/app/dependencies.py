@@ -25,7 +25,12 @@ def get_current_user(
     if user_id is None:
         raise UnauthorizedException("Token 缺少用户信息")
 
-    user = db.query(User).filter(User.id == int(user_id)).first()
+    try:
+        uid = int(user_id)
+    except (TypeError, ValueError):
+        raise UnauthorizedException("Token 用户信息无效")
+
+    user = db.query(User).filter(User.id == uid).first()
     if user is None:
         raise UnauthorizedException("用户不存在")
 

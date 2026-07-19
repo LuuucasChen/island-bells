@@ -97,13 +97,7 @@ def test_sit_and_stand(client, db_session):
         json={"name": "入座测试"},
         headers=_auth_header(owner.id),
     )
-    room_code = resp.json()["room_code"]
-
-    # 加入
-    resp = client.post(
-        f"/v1/rooms/{room_code}/join",
-        headers=_auth_header(owner.id),
-    )
+    # 创建房间时岛主已自动加入，无需再 join
     room_id = resp.json()["room_id"]
 
     # 入座

@@ -1,13 +1,13 @@
 """岛屿铃钱记 — 房间(岛屿)相关 Schema"""
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class CreateRoomRequest(BaseModel):
     name: str = ""
-    initial_chips: int = 10000
-    sb_amount: int = 25
-    bb_amount: int = 50
+    initial_chips: int = Field(10000, gt=0)
+    sb_amount: int = Field(25, gt=0)
+    bb_amount: int = Field(50, gt=0)
     max_players: int = 9
 
 
@@ -21,9 +21,9 @@ class SitRequest(BaseModel):
 
 class UpdateRoomRequest(BaseModel):
     name: str | None = None
-    initial_chips: int | None = None
-    sb_amount: int | None = None
-    bb_amount: int | None = None
+    initial_chips: int | None = Field(None, gt=0)
+    sb_amount: int | None = Field(None, gt=0)
+    bb_amount: int | None = Field(None, gt=0)
     max_players: int | None = None
 
 
