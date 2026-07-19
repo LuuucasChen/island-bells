@@ -721,7 +721,7 @@ function GameTable() {
                       <span className="my-avatar-streak">🔥{winStreak}</span>
                     )}
                     {/* 赢家奖杯 (showing_cards 阶段) */}
-                    {showInlineCards && myPlayer.player_id === bestHandPlayerId && (
+                    {showInlineCards && bestHandPlayerIds.has(myPlayer.player_id) && (
                       <span className="my-avatar-trophy">🏆</span>
                     )}
                   </div>
